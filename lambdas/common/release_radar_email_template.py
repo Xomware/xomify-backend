@@ -4,7 +4,7 @@ XOMIFY Release Radar Email Template
 HTML email template for weekly release radar notifications.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 
 
@@ -22,7 +22,7 @@ def generate_release_radar_email(
     Args:
         user_name: User's display name
         week_key: Week key in "YYYY-WW" format
-        stats: Dict with totalTracks, albumCount, singleCount, appearsOnCount
+        stats: Dict with releaseCount, trackCount, albumCount, singleCount
         releases: List of release objects
         playlist_url: URL to the Spotify playlist
         preview_count: Number of releases to preview (default 3)
@@ -42,6 +42,9 @@ def generate_release_radar_email(
     
     # Build stats section
     stats_html = build_stats_section(stats)
+    
+    # Get release count for greeting
+    release_count = stats.get('releaseCount', 0)
     
     return f"""
 <!DOCTYPE html>
@@ -99,7 +102,7 @@ def generate_release_radar_email(
                                             Hey {user_name}! 👋
                                         </p>
                                         <p style="margin: 10px 0 0 0; font-size: 16px; color: #b0b0c0; line-height: 1.6;">
-                                            Artists you follow dropped <strong style="color: #1bdc6f;">{stats.get('totalTracks', 0)} new tracks</strong> this week!
+                                            Artists you follow dropped <strong style="color: #1bdc6f;">{release_count} new releases</strong> this week!
                                         </p>
                                     </td>
                                 </tr>
@@ -209,10 +212,10 @@ def format_week_display(week_key: str) -> str:
         year, week = map(int, week_key.split('-'))
         # Get approximate date range
         jan_4 = datetime(year, 1, 4)
-        start_of_week_1 = jan_4 - datetime.timedelta(days=jan_4.weekday())
-        monday = start_of_week_1 + datetime.timedelta(weeks=week - 1)
-        saturday = monday - datetime.timedelta(days=2)
-        friday = saturday + datetime.timedelta(days=6)
+        start_of_week_1 = jan_4 - timedelta(days=jan_4.weekday())
+        monday = start_of_week_1 + timedelta(weeks=week - 1)
+        saturday = monday + timedelta(days=5)  # Saturday (our week start)
+        friday = saturday + timedelta(days=6)   # Friday (our week end)
         
         if saturday.month == friday.month:
             return f"{saturday.strftime('%B %d')} - {friday.strftime('%d, %Y')}"
@@ -226,6 +229,7 @@ def build_stats_section(stats: dict) -> str:
     """Build the stats HTML section."""
     album_count = stats.get('albumCount', 0)
     single_count = stats.get('singleCount', 0)
+    # We don't track appears_on separately in stats, so use 0 or calculate from releases
     appears_on_count = stats.get('appearsOnCount', 0)
     
     return f"""
@@ -272,10 +276,11 @@ def build_preview_section(previews: list) -> str:
     preview_items = ""
     for release in previews:
         image_url = release.get('imageUrl') or 'https://xomify.com/assets/default-album.png'
-        name = release.get('name', 'Unknown Release')[:40]
-        artist = release.get('artistName', 'Unknown Artist')[:30]
-        release_type = release.get('albumType', 'release').title()
-        track_count = release.get('totalTracks', 1)
+        # Use albumName (our field name) with fallback to name
+        name = (release.get('albumName') or release.get('name') or 'Unknown Release')[:40]
+        artist = (release.get('artistName') or 'Unknown Artist')[:30]
+        release_type = (release.get('albumType') or 'release').title()
+        track_count = release.get('totalTracks') or 1
         
         # Type badge color
         badge_bg = 'rgba(156, 10, 191, 0.2)' if release_type == 'Album' else 'rgba(27, 220, 111, 0.2)'
@@ -335,13 +340,13 @@ def generate_release_radar_email_plain_text(
     """
     Generate plain text version of the release radar email.
     """
-    total = stats.get('totalTracks', 0)
+    release_count = stats.get('releaseCount', 0)
     albums = stats.get('albumCount', 0)
     singles = stats.get('singleCount', 0)
     features = stats.get('appearsOnCount', 0)
     
-    # Get a few preview names
-    preview_names = [r.get('name', 'Unknown') for r in releases[:5]]
+    # Get a few preview names - use albumName field
+    preview_names = [r.get('albumName') or r.get('name', 'Unknown') for r in releases[:5]]
     previews_text = '\n'.join([f"  • {name}" for name in preview_names])
     
     return f"""
@@ -350,7 +355,7 @@ def generate_release_radar_email_plain_text(
 
 Hey {user_name}!
 
-Artists you follow dropped {total} new tracks this week!
+Artists you follow dropped {release_count} new releases this week!
 
 BREAKDOWN:
   • {albums} Albums
