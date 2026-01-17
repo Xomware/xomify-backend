@@ -48,7 +48,7 @@ def generate_release_radar_email(
     release_count = stats.get('releaseCount', 0)
 
     # Get logo for embedding
-    logo_base64 = BLACK_LOGO_BASE_64
+    logo_base64 = BLACK_LOGO_BASE_64.replace('\n', '').replace(' ', '').strip()
     
     return f"""
 <!DOCTYPE html>
