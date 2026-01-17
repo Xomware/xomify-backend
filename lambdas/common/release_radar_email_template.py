@@ -6,6 +6,7 @@ HTML email template for weekly release radar notifications.
 
 from datetime import datetime, timedelta
 import random
+from lambdas.common.constants import BLACK_LOGO_BASE_64
 
 
 def generate_release_radar_email(
@@ -63,7 +64,7 @@ def generate_release_radar_email(
                     <!-- Header -->
                     <tr>
                         <td align="center" style="padding-bottom: 30px;">
-                            <img src="https://xomify.com/assets/logo.png" alt="Xomify" width="120" style="display: block;">
+                            <img src="data:image/jpeg;base64,{BLACK_LOGO_BASE_64}" alt="Xomify" width="120" style="display: block;">
                         </td>
                     </tr>
                     
@@ -229,9 +230,8 @@ def build_stats_section(stats: dict) -> str:
     """Build the stats HTML section."""
     album_count = stats.get('albumCount', 0)
     single_count = stats.get('singleCount', 0)
-    # We don't track appears_on separately in stats, so use 0 or calculate from releases
-    appears_on_count = stats.get('appearsOnCount', 0)
-    
+    total_tracks = stats.get('totalTracks', 0)
+
     return f"""
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
         <tr>
@@ -247,8 +247,8 @@ def build_stats_section(stats: dict) -> str:
                             <p style="margin: 5px 0 0 0; font-size: 12px; color: #8a8a9a; text-transform: uppercase; letter-spacing: 0.5px;">Singles</p>
                         </td>
                         <td width="33%" align="center" style="padding: 10px;">
-                            <p style="margin: 0; font-size: 24px; font-weight: 700; color: #ffffff;">{appears_on_count}</p>
-                            <p style="margin: 5px 0 0 0; font-size: 12px; color: #8a8a9a; text-transform: uppercase; letter-spacing: 0.5px;">Features</p>
+                            <p style="margin: 0; font-size: 24px; font-weight: 700; color: #ffffff;">{total_tracks}</p>
+                            <p style="margin: 5px 0 0 0; font-size: 12px; color: #8a8a9a; text-transform: uppercase; letter-spacing: 0.5px;">Total Tracks</p>
                         </td>
                     </tr>
                 </table>
@@ -343,12 +343,12 @@ def generate_release_radar_email_plain_text(
     release_count = stats.get('releaseCount', 0)
     albums = stats.get('albumCount', 0)
     singles = stats.get('singleCount', 0)
-    features = stats.get('appearsOnCount', 0)
-    
+    total_tracks = stats.get('totalTracks', 0)
+
     # Get a few preview names - use albumName field
     preview_names = [r.get('albumName') or r.get('name', 'Unknown') for r in releases[:5]]
     previews_text = '\n'.join([f"  • {name}" for name in preview_names])
-    
+
     return f"""
 📻 Your Weekly Release Radar
 {'-' * 40}
@@ -359,8 +359,8 @@ Artists you follow dropped {release_count} new releases this week!
 
 BREAKDOWN:
   • {albums} Albums
-  • {singles} Singles  
-  • {features} Features/Collabs
+  • {singles} Singles
+  • {total_tracks} Total Tracks
 
 HIGHLIGHTS:
 {previews_text}

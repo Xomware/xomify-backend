@@ -142,8 +142,8 @@ def send_release_radar_email(
         )
         
         # Build subject line
-        track_count = stats.get('totalTracks', 0)
-        subject = f"📻 {track_count} new releases from artists you follow!"
+        release_count = stats.get('releaseCount', 0)
+        subject = f"📻 {release_count} new releases from artists you follow!"
         
         # Send via SES
         response = ses_client.send_email(
