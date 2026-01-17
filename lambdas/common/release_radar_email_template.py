@@ -6,7 +6,7 @@ HTML email template for weekly release radar notifications.
 
 from datetime import datetime, timedelta
 import random
-from lambdas.common.constants import BLACK_LOGO_BASE_64
+from lambdas.common.constants import LOGO_URL
 
 
 def generate_release_radar_email(
@@ -46,9 +46,6 @@ def generate_release_radar_email(
 
     # Get release count for greeting
     release_count = stats.get('releaseCount', 0)
-
-    # Get logo for embedding
-    logo_base64 = BLACK_LOGO_BASE_64.replace('\n', '').replace(' ', '').strip()
     
     return f"""
 <!DOCTYPE html>
@@ -67,7 +64,7 @@ def generate_release_radar_email(
                     <!-- Header -->
                     <tr>
                         <td align="center" style="padding-bottom: 30px;">
-                            <img src="data:image/jpeg;base64,{logo_base64}" alt="Xomify" width="120" style="display: block;">
+                            <img src="{LOGO_URL}" alt="Xomify" width="120" style="display: block;">
                         </td>
                     </tr>
                     
