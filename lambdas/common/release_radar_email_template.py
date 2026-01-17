@@ -34,18 +34,21 @@ def generate_release_radar_email(
     
     # Get random preview releases
     previews = get_random_previews(releases, preview_count)
-    
+
     # Format week display
     week_display = format_week_display(week_key)
-    
+
     # Build preview HTML
     preview_html = build_preview_section(previews)
-    
+
     # Build stats section
     stats_html = build_stats_section(stats)
-    
+
     # Get release count for greeting
     release_count = stats.get('releaseCount', 0)
+
+    # Get logo for embedding
+    logo_base64 = BLACK_LOGO_BASE_64
     
     return f"""
 <!DOCTYPE html>
@@ -64,7 +67,7 @@ def generate_release_radar_email(
                     <!-- Header -->
                     <tr>
                         <td align="center" style="padding-bottom: 30px;">
-                            <img src="data:image/jpeg;base64,{BLACK_LOGO_BASE_64}" alt="Xomify" width="120" style="display: block;">
+                            <img src="data:image/jpeg;base64,{logo_base64}" alt="Xomify" width="120" style="display: block;">
                         </td>
                     </tr>
                     
