@@ -230,7 +230,7 @@ def build_stats_section(stats: dict) -> str:
     """Build the stats HTML section."""
     album_count = stats.get('albumCount', 0)
     single_count = stats.get('singleCount', 0)
-    total_tracks = stats.get('totalTracks', 0)
+    total_tracks = stats.get('trackCount', 0)
 
     return f"""
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
@@ -343,7 +343,7 @@ def generate_release_radar_email_plain_text(
     release_count = stats.get('releaseCount', 0)
     albums = stats.get('albumCount', 0)
     singles = stats.get('singleCount', 0)
-    total_tracks = stats.get('totalTracks', 0)
+    total_tracks = stats.get('trackCount', 0)
 
     # Get a few preview names - use albumName field
     preview_names = [r.get('albumName') or r.get('name', 'Unknown') for r in releases[:5]]
