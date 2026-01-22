@@ -78,7 +78,8 @@ def handler(event, context):
                 body['email'],
                 body['userId'],
                 body['displayName'],
-                body['refreshToken']
+                body['refreshToken'],
+                body['avatar']
             )
             log.info(f"Updated refresh token for {body['email']}")
             

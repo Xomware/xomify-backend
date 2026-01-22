@@ -84,7 +84,7 @@ def handler(event, context):
             return response(404, {'error': 'Not found'})
             
     except Exception as err:
-        log.error(f"Release Radar handler error: {err}")
+        log.error(f"Friends handler error: {err}")
         return response(500, {'error': str(err)})
 
 
