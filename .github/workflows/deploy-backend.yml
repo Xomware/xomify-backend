@@ -30,8 +30,8 @@ jobs:
           zip -r ../../friends.zip *
           cd ../release_radar
           zip -r ../../release_radar.zip *
-          cd ../update_user_table
-          zip -r ../../update_user_table.zip *
+          cd ../user
+          zip -r ../../user.zip *
           cd ../wrapped_email
           zip -r ../../wrapped_email.zip *
           cd ../release_radar_email
@@ -150,18 +150,18 @@ jobs:
             --layers $LAYER_ARN \
             --region $AWS_REGION
 
-      - name: Deploy Update User Table Lambda Function Code
+      - name: Deploy User Lambda Function Code
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: "us-east-1"
         run: |
           aws lambda update-function-code \
-            --function-name xomify-update-user-table \
-            --zip-file fileb://update_user_table.zip
+            --function-name xomify-user \
+            --zip-file fileb://user.zip
           sleep 5
 
-      - name: Deploy Update User Table Lambda Configurations
+      - name: Deploy User Lambda Configurations
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -169,7 +169,7 @@ jobs:
           LAYER_ARN: ${{ env.LAYER_ARN }}
         run: |
           aws lambda update-function-configuration \
-            --function-name xomify-update-user-table \
+            --function-name xomify-user \
             --layers $LAYER_ARN \
             --region $AWS_REGION
 
