@@ -110,9 +110,9 @@ def list_friends(params: dict) -> dict:
                 accepted.append(friend)
             elif friend['status'] == 'pending':
                 if friend['direction'] == 'outgoing':
-                    requested.append(friend)
-                else:
                     pending.append(friend)
+                else:
+                    requested.append(friend)
             else:
                 blocked.append(friend)
 
