@@ -38,7 +38,7 @@ def list_all_friends_for_user(email: str):
         log.info(f"Searching friendship table for all friends for {email}..")
         table = dynamodb.Table(FRIENDSHIPS_TABLE_NAME)
         response = table.query(
-            KeyConditionExpression=Key("pk").eq(email)
+            KeyConditionExpression=Key("email").eq(email)
         )
 
         items = response["Items"]
@@ -64,8 +64,8 @@ def send_friend_request(email: str, request_email: str):
                     "Put": {
                         "TableName": FRIENDSHIPS_TABLE_NAME,
                         "Item": {
-                            "user_email": {"S": email},
-                            "friend_email": {"S": request_email},
+                            "email": {"S": email},
+                            "friendEmail": {"S": request_email},
                             "status": {"S": "pending"},
                             "direction": {"S": "outgoing"},
                             "createdAt": {"S": _get_timestamp()}
@@ -77,8 +77,8 @@ def send_friend_request(email: str, request_email: str):
                     "Put": {
                         "TableName": FRIENDSHIPS_TABLE_NAME,
                         "Item": {
-                            "user_email": {"S": request_email},
-                            "friend_email": {"S": email},
+                            "email": {"S": request_email},
+                            "friendEmail": {"S": email},
                             "status": {"S": "pending"},
                             "direction": {"S": "incoming"},
                             "createdAt": {"S": _get_timestamp()}
@@ -111,8 +111,8 @@ def accept_friend_request(email: str, request_email: str):
                     "Update": {
                         "TableName": FRIENDSHIPS_TABLE_NAME,
                         "Key": {
-                            "PK": {"S": email},
-                            "SK": {"S": request_email}
+                            "email": {"S": email},
+                            "friendEmail": {"S": request_email}
                         },
                         "UpdateExpression": "SET status = :accepted, acceptedAt = :ts",
                         "ExpressionAttributeValues": {
@@ -125,8 +125,8 @@ def accept_friend_request(email: str, request_email: str):
                     "Update": {
                         "TableName": FRIENDSHIPS_TABLE_NAME,
                         "Key": {
-                            "PK": {"S": request_email},
-                            "SK": {"S": email}
+                            "email": {"S": request_email},
+                            "friendEmail": {"S": email}
                         },
                         "UpdateExpression": "SET status = :accepted, acceptedAt = :ts",
                         "ExpressionAttributeValues": {
@@ -160,8 +160,8 @@ def delete_friends(email: str, request_email: str):
                     "Delete": {
                         "TableName": FRIENDSHIPS_TABLE_NAME,
                         "Key": {
-                            "PK": {"S": email},
-                            "SK": {"S": request_email}
+                            "email": {"S": email},
+                            "friendEmail": {"S": request_email}
                         }
                     }
                 },
@@ -169,8 +169,8 @@ def delete_friends(email: str, request_email: str):
                     "Delete": {
                         "TableName": FRIENDSHIPS_TABLE_NAME,
                         "Key": {
-                            "PK": {"S": request_email},
-                            "SK": {"S": email}
+                            "email": {"S": request_email},
+                            "friendEmail": {"S": email}
                         }
                     }
                 }
