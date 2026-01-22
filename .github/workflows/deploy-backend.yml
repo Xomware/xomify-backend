@@ -26,6 +26,8 @@ jobs:
           zip -r ../../authorizer.zip *
           cd ../wrapped
           zip -r ../../wrapped.zip *
+          cd ../friends
+          zip -r ../../friends.zip *
           cd ../release_radar
           zip -r ../../release_radar.zip *
           cd ../update_user_table
@@ -99,6 +101,29 @@ jobs:
         run: |
           aws lambda update-function-configuration \
             --function-name xomify-wrapped \
+            --layers $LAYER_ARN \
+            --region $AWS_REGION
+
+      - name: Deploy Friends Lambda Function Code
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: "us-east-1"
+        run: |
+          aws lambda update-function-code \
+            --function-name xomify-friends \
+            --zip-file fileb://friends.zip
+          sleep 5
+
+      - name: Deploy Friends Lambda Configurations
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: "us-east-1"
+          LAYER_ARN: ${{ env.LAYER_ARN }}
+        run: |
+          aws lambda update-function-configuration \
+            --function-name xomify-friends \
             --layers $LAYER_ARN \
             --region $AWS_REGION
 

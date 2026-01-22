@@ -97,6 +97,31 @@ class Spotify:
             log.error(f"AIOHTTP Initialize Wrapped: {err}")
             raise Exception(f"AIOHTTP Initialize Wrapped: {err}") from err
         
+    async def aiohttp_initialize_top_items(self):
+        """Initialize client for fetching top tracks, artists, and genres only (no playlists)."""
+        try:
+            self.access_token = await self.aiohttp_get_access_token()
+            self.headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            # Top tracks for each time range
+            self.top_tracks_short = TrackList('short_term', self.headers, self.aiohttp_session)
+            self.top_tracks_medium = TrackList('medium_term', self.headers, self.aiohttp_session)
+            self.top_tracks_long = TrackList('long_term', self.headers, self.aiohttp_session)
+
+            # Top artists for each time range
+            self.top_artists_short = ArtistList('short_term', self.headers, self.aiohttp_session)
+            self.top_artists_medium = ArtistList('medium_term', self.headers, self.aiohttp_session)
+            self.top_artists_long = ArtistList('long_term', self.headers, self.aiohttp_session)
+
+            log.info(f"Top items client initialized for {self.email}")
+
+        except Exception as err:
+            log.error(f"AIOHTTP Initialize Top Items: {err}")
+            raise Exception(f"AIOHTTP Initialize Top Items: {err}") from err
+
     async def aiohttp_initialize_release_radar(self):
         """Initialize client for release radar cron job (followed artists + playlist)."""
         try:
@@ -234,7 +259,42 @@ class Spotify:
             "medium_term": self.top_artists_medium.top_genres,
             "long_term": self.top_artists_long.top_genres
         }
-    
+
+    async def get_top_items_for_api(self) -> dict:
+        """
+        Fetch and return top tracks, artists, and genres for API response.
+        Returns a structured dict with all time ranges.
+        """
+        try:
+            log.info(f"Fetching top items for API for user {self.email}...")
+
+            # Fetch tracks and artists in parallel
+            await asyncio.gather(
+                self.get_top_tracks(),
+                self.get_top_artists()
+            )
+
+            return {
+                "tracks": {
+                    "short_term": self.top_tracks_short.track_list,
+                    "medium_term": self.top_tracks_medium.track_list,
+                    "long_term": self.top_tracks_long.track_list
+                },
+                "artists": {
+                    "short_term": self.top_artists_short.artist_list,
+                    "medium_term": self.top_artists_medium.artist_list,
+                    "long_term": self.top_artists_long.artist_list
+                },
+                "genres": {
+                    "short_term": self.top_artists_short.top_genres,
+                    "medium_term": self.top_artists_medium.top_genres,
+                    "long_term": self.top_artists_long.top_genres
+                }
+            }
+        except Exception as err:
+            log.error(f"Get Top Items For API: {err}")
+            raise Exception(f"Get Top Items For API: {err}") from err
+
     def __get_last_month_data(self) -> tuple:
         """
         Get information about last month for playlist naming.
