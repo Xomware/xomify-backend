@@ -1,0 +1,125 @@
+name: Deploy Backend Smart
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2 # Required to detect changes against the previous commit
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # 1. Detect Changes
+      # We check which files changed in the latest push
+      - name: Detect Changes
+        id: changes
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+
+          # Check if Layer needs update (common folder or requirements.txt)
+          if echo "$CHANGED_FILES" | grep -qE "lambdas/common|requirements.txt"; then
+            echo "layer_changed=true" >> $GITHUB_OUTPUT
+            echo "Layer changes detected."
+          else
+            echo "layer_changed=false" >> $GITHUB_OUTPUT
+            echo "No layer changes."
+          fi
+
+          # Save changed files to env for the loop step
+          echo "CHANGED_FILES<<EOF" >> $GITHUB_ENV
+          echo "$CHANGED_FILES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # 2. Handle Layer (Only runs if layer_changed is true)
+      - name: Deploy Lambda Layer
+        if: steps.changes.outputs.layer_changed == 'true'
+        id: deploy-layer
+        run: |
+          echo "Building Layer..."
+          mkdir -p python/lambdas
+          cp -r lambdas/common python/lambdas/
+          pip install --platform manylinux2014_x86_64 --only-binary=:all: -t python/ -r requirements.txt
+          zip -r xomify-shared-packages.zip python
+
+          echo "Publishing Layer..."
+          LAYER_OUTPUT=$(aws lambda publish-layer-version \
+            --layer-name xomify-shared-packages \
+            --zip-file fileb://xomify-shared-packages.zip \
+            --compatible-runtimes python3.10 \
+            --output json)
+
+          NEW_ARN=$(echo $LAYER_OUTPUT | jq -r .LayerVersionArn)
+          echo "LAYER_ARN=$NEW_ARN" >> $GITHUB_ENV
+          echo "New Layer ARN: $NEW_ARN"
+
+      # 3. Smart Deploy Loop
+      # Iterates through your functions, checks changes, and deploys accordingly
+      - name: Deploy Lambdas
+        env:
+          # Define your map of Folder Name : Function Name here
+          LAMBDA_MAP: |
+            authorizer:xomify-authorizer
+            wrapped:xomify-wrapped
+            friends:xomify-friends
+            release_radar:xomify-release-radar
+            update_user_table:xomify-update-user-table
+            wrapped_email:xomify-wrapped-email
+            release_radar_email:xomify-release-radar-email
+          LAYER_CHANGED: ${{ steps.changes.outputs.layer_changed }}
+        run: |
+          # Loop through each line in LAMBDA_MAP
+          echo "$LAMBDA_MAP" | while IFS=: read -r FOLDER FUNC_NAME; do
+            [ -z "$FOLDER" ] && continue # Skip empty lines
+
+            echo "------------------------------------------------"
+            echo "Checking $FUNC_NAME (Folder: lambdas/$FOLDER)..."
+            
+            # CHECK 1: Did the Code Change?
+            # We check if the CHANGED_FILES list contains this specific folder
+            if echo "$CHANGED_FILES" | grep -q "lambdas/$FOLDER"; then
+              echo ">> Code change detected for $FOLDER. Deploying code..."
+              
+              cd lambdas/$FOLDER
+              zip -r ../../$FOLDER.zip *
+              cd ../..
+              
+              aws lambda update-function-code \
+                --function-name $FUNC_NAME \
+                --zip-file fileb://$FOLDER.zip > /dev/null
+              
+              echo ">> Code updated successfully."
+            else
+              echo ">> No code changes for $FOLDER."
+            fi
+
+            # CHECK 2: Did the Layer Change?
+            # If the layer changed, we MUST update the configuration of ALL lambdas
+            if [ "$LAYER_CHANGED" == "true" ]; then
+              echo ">> Layer was updated. Linking new layer to $FUNC_NAME..."
+              
+              aws lambda update-function-configuration \
+                --function-name $FUNC_NAME \
+                --layers $LAYER_ARN > /dev/null
+                
+              echo ">> Configuration updated with new Layer ARN."
+            fi
+
+          done
