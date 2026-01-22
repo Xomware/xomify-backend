@@ -7,7 +7,7 @@ Endpoints:
 - GET /friends/list - Get user's friends
 - GET /friends/pending - Gets incoming and outgoing pending friend requets for a user
 - GET /friends/profile - Gets Friends Profile
-- GET /friends/search - Search for all possible friends by email, username, or name
+- GET /friends/all - Get all friends
 - POST /friends/request - Request a friend
 - POST /friends/aceept - accept a friend request
 - POST /friends/reject - Reject a friend request
@@ -58,8 +58,8 @@ def handler(event, context):
             require_fields(query_params, 'friendEmail')
             return get_friends_profile(query_params)
         
-        elif 'search' in path and http_method == 'GET':
-            return search_all_friends(query_params)
+        elif 'all' in path and http_method == 'GET':
+            return get_all_friends()
 
         elif 'request' in path and http_method == 'POST':
             body = parse_body(event)
@@ -192,13 +192,13 @@ def get_friends_profile(params: dict) -> dict:
         return response(500, {'error': str(err)})
     
 # ============================================
-#  GET /friends/search
+#  GET /friends/all
 #     Get all friends from friendhsip table
 #     Query params:
 #        - friendEmail: Friends's email (required))
 # ============================================
 
-def search_all_friends(params: dict) -> dict:
+def get_all_friends() -> dict:
 
     try:
         log.info("Getting All Friends from table.")

@@ -1,10 +1,11 @@
 """
-XOMIFY User Table Handler
+XOMIFY User Handler
 =========================
 API endpoints for user management.
 """
 
 from lambdas.common.logger import get_logger
+from lambdas.common.constants import USERS_TABLE_NAME
 from lambdas.common.errors import UserTableError, ValidationError, handle_errors
 from lambdas.common.utility_helpers import (
     success_response,
@@ -16,7 +17,8 @@ from lambdas.common.utility_helpers import (
 from lambdas.common.dynamo_helpers import (
     update_user_table_refresh_token,
     update_user_table_enrollments,
-    get_user_table_data
+    get_user_table_data,
+    full_table_scan
 )
 
 log = get_logger(__file__)
@@ -32,6 +34,7 @@ def handler(event, context):
     Endpoints:
         POST /user/user-table - Update user (refresh token or enrollments)
         GET  /user/user-table - Get user data
+        GET /user/all         - Get All users
     """
     
     path = event.get("path", "").lower()
@@ -48,6 +51,18 @@ def handler(event, context):
         log.info(f"Retrieved data for {params['email']}")
         
         return success_response(response)  # is_api=True by default, JSON stringifies body
+    
+    # GET /user/all - Get all users
+    if path == f"/{HANDLER}/all" and http_method == "GET":
+        users = full_table_scan(USERS_TABLE_NAME)
+        clean_users = []
+        for user in users:
+            del user['refreshToken']
+            del user['releaseRadarId']
+            clean_users.append(user)
+        log.info(f"Retrieved {len(clean_users)} users from user table")
+        
+        return success_response(clean_users)
     
     # POST /user/user-table - Update user
     if path == f"/{HANDLER}/user-table" and http_method == "POST":
