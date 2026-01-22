@@ -58,7 +58,8 @@ def handler(event, context):
         clean_users = []
         for user in users:
             del user['refreshToken']
-            del user['releaseRadarId']
+            if 'releaseRadarId' in user:
+                del user['releaseRadarId']
             clean_users.append(user)
         log.info(f"Retrieved {len(clean_users)} users from user table")
         
