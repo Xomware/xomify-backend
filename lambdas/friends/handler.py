@@ -185,6 +185,7 @@ def get_friends_profile(params: dict) -> dict:
             'topSongs': friend_top_items['tracks'],
             'topArtists': friend_top_items['artists'],
             'topGenres': friend_top_items['genres'],
+            'avatar': friend_user.get('avatar', None)
         })
 
     except Exception as err:
