@@ -176,17 +176,17 @@ def get_friends_profile(params: dict) -> dict:
         log.info(f"Getting friend's profile for user {friend_email}")
         friend_user = get_user_table_data(params['friendEmail'])
         log.info(f"Retrieved data for {params['friendEmail']}")
-        friend_top_items = get_user_top_items(friend_user)
-        
-        return response(200, { 
-            'displayName': friend_user.get('displayName', None), 
-            'email': friend_email, 
+        friend_top_items = asyncio.run(get_user_top_items(friend_user))
+
+        return response(200, {
+            'displayName': friend_user.get('displayName', None),
+            'email': friend_email,
             'userId': friend_user.get('userId', None),
-            'topSongs': friend_top_items['tracks'], 
-            'topArtists': friend_top_items['artists'], 
-            'topGenres': friend_top_items['genres'], 
+            'topSongs': friend_top_items['tracks'],
+            'topArtists': friend_top_items['artists'],
+            'topGenres': friend_top_items['genres'],
         })
-        
+
     except Exception as err:
         log.error(f"Get Friends Profile error: {err}")
         return response(500, {'error': str(err)})
