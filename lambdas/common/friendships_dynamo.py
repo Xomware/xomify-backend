@@ -70,7 +70,7 @@ def send_friend_request(email: str, request_email: str):
                             "direction": {"S": "outgoing"},
                             "createdAt": {"S": _get_timestamp()}
                         },
-                        "ConditionExpression": "attribute_not_exists(user_email) AND attribute_not_exists(friend_email)"
+                        "ConditionExpression": "attribute_not_exists(email) AND attribute_not_exists(friendEmail)"
                     }
                 },
                 {
@@ -83,7 +83,7 @@ def send_friend_request(email: str, request_email: str):
                             "direction": {"S": "incoming"},
                             "createdAt": {"S": _get_timestamp()}
                         },
-                        "ConditionExpression": "attribute_not_exists(user_email) AND attribute_not_exists(friend_email)"
+                        "ConditionExpression": "attribute_not_exists(email) AND attribute_not_exists(friendEmail)"
                     }
                 }
             ]
@@ -114,7 +114,10 @@ def accept_friend_request(email: str, request_email: str):
                             "email": {"S": email},
                             "friendEmail": {"S": request_email}
                         },
-                        "UpdateExpression": "SET status = :accepted, acceptedAt = :ts",
+                        "UpdateExpression": "SET #status = :accepted, acceptedAt = :ts",
+                        "ExpressionAttributeNames": {
+                            "#status": "status"
+                        },
                         "ExpressionAttributeValues": {
                             ":accepted": {"S": "accepted"},
                             ":ts": {"S": _get_timestamp()}
@@ -128,7 +131,10 @@ def accept_friend_request(email: str, request_email: str):
                             "email": {"S": request_email},
                             "friendEmail": {"S": email}
                         },
-                        "UpdateExpression": "SET status = :accepted, acceptedAt = :ts",
+                        "UpdateExpression": "SET #status = :accepted, acceptedAt = :ts",
+                        "ExpressionAttributeNames": {
+                            "#status": "status"
+                        },
                         "ExpressionAttributeValues": {
                             ":accepted": {"S": "accepted"},
                             ":ts": {"S": _get_timestamp()}
