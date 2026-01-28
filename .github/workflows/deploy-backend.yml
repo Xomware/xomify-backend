@@ -5,9 +5,67 @@ on:
     branches:
       - master
 
+env:
+  AWS_REGION: "us-east-1"
+
 jobs:
-  deploy:
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      common_changed: ${{ steps.changes.outputs.common }}
+      changed_lambdas: ${{ steps.changes.outputs.changed_lambdas }}
+      all_lambdas: ${{ steps.all-lambdas.outputs.all_lambdas }}
+      has_lambda_changes: ${{ steps.changes.outputs.has_lambda_changes }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        id: changes
+        run: |
+          # Get changed files between current and previous commit
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Check if common layer changed
+          if echo "$CHANGED_FILES" | grep -q "^lambdas/common/"; then
+            echo "common=true" >> $GITHUB_OUTPUT
+          else
+            echo "common=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Find changed lambda folders (excluding common) and format as JSON array
+          CHANGED_LAMBDAS=$(echo "$CHANGED_FILES" | grep "^lambdas/" | grep -v "^lambdas/common/" | cut -d'/' -f2 | sort -u | grep -v '^$' || true)
+
+          if [ -n "$CHANGED_LAMBDAS" ]; then
+            # Convert to JSON array
+            JSON_ARRAY=$(echo "$CHANGED_LAMBDAS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "changed_lambdas=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo "has_lambda_changes=true" >> $GITHUB_OUTPUT
+            echo "Changed lambdas: $JSON_ARRAY"
+          else
+            echo "changed_lambdas=[]" >> $GITHUB_OUTPUT
+            echo "has_lambda_changes=false" >> $GITHUB_OUTPUT
+            echo "No lambda changes detected"
+          fi
+
+      - name: Get all lambda folders
+        id: all-lambdas
+        run: |
+          # List all lambda folders except common and format as JSON array
+          ALL_LAMBDAS=$(ls -d lambdas/*/ 2>/dev/null | grep -v "lambdas/common" | xargs -n1 basename | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "all_lambdas=$ALL_LAMBDAS" >> $GITHUB_OUTPUT
+          echo "All lambdas: $ALL_LAMBDAS"
+
+  deploy-layer:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.common_changed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      layer_arn: ${{ steps.deploy-layer.outputs.layer_arn }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -17,36 +75,18 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt -t lambdas/common
-
-      - name: Package Lambda functions
+      - name: Package layer
         run: |
-          cd lambdas/authorizer
-          zip -r ../../authorizer.zip *
-          cd ../wrapped
-          zip -r ../../wrapped.zip *
-          cd ../friends
-          zip -r ../../friends.zip *
-          cd ../release_radar
-          zip -r ../../release_radar.zip *
-          cd ../user
-          zip -r ../../user.zip *
-          cd ../wrapped_email
-          zip -r ../../wrapped_email.zip *
-          cd ../release_radar_email
-          zip -r ../../release_radar_email.zip *
-          cd ../..
           mkdir -p python/lambdas
           cp -r lambdas/common python/lambdas/
           python3.10 -m pip install --platform manylinux2014_x86_64 --only-binary=:all: -t python/ -r requirements.txt
           zip -r xomify-shared-packages.zip python
 
-      - name: Deploy Lambda Layer
+      - name: Deploy layer
+        id: deploy-layer
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
         run: |
           LAYER_OUTPUT=$(aws lambda publish-layer-version \
             --layer-name xomify-shared-packages \
@@ -55,166 +95,93 @@ jobs:
             --region $AWS_REGION \
             --output json)
 
-          echo "LAYER_ARN=$(echo $LAYER_OUTPUT | jq -r .LayerVersionArn)" >> $GITHUB_ENV
-          echo "Layer ARN: $LAYER_ARN"
+          LAYER_ARN=$(echo $LAYER_OUTPUT | jq -r .LayerVersionArn)
+          echo "layer_arn=$LAYER_ARN" >> $GITHUB_OUTPUT
+          echo "Published layer: $LAYER_ARN"
 
-      - name: Deploy Authroizer Lambda Function Code
+  update-all-lambdas-layer:
+    needs: [detect-changes, deploy-layer]
+    if: needs.detect-changes.outputs.common_changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lambda: ${{ fromJson(needs.detect-changes.outputs.all_lambdas) }}
+      fail-fast: false
+    steps:
+      - name: Update lambda layer configuration
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
         run: |
-          aws lambda update-function-code \
-            --function-name xomify-authorizer \
-            --zip-file fileb://authorizer.zip
-          sleep 5
+          FUNCTION_NAME="xomify-${{ matrix.lambda }}"
+          # Convert underscores to hyphens for AWS function names
+          FUNCTION_NAME=$(echo $FUNCTION_NAME | tr '_' '-')
 
-      - name: Deploy Authorizer Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
+          echo "Updating layer for $FUNCTION_NAME"
           aws lambda update-function-configuration \
-            --function-name xomify-authorizer \
-            --layers $LAYER_ARN \
+            --function-name $FUNCTION_NAME \
+            --layers ${{ needs.deploy-layer.outputs.layer_arn }} \
+            --region $AWS_REGION || echo "Function $FUNCTION_NAME not found, skipping..."
+
+  deploy-changed-lambdas:
+    needs: [detect-changes, deploy-layer]
+    if: always() && needs.detect-changes.outputs.has_lambda_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lambda: ${{ fromJson(needs.detect-changes.outputs.changed_lambdas) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Package lambda
+        run: |
+          cd lambdas/${{ matrix.lambda }}
+          zip -r ../../${{ matrix.lambda }}.zip *
+
+      - name: Deploy lambda code
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          FUNCTION_NAME="xomify-${{ matrix.lambda }}"
+          # Convert underscores to hyphens for AWS function names
+          FUNCTION_NAME=$(echo $FUNCTION_NAME | tr '_' '-')
+
+          echo "Deploying $FUNCTION_NAME"
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --zip-file fileb://${{ matrix.lambda }}.zip \
             --region $AWS_REGION
 
-      - name: Deploy Wrapped Lambda Function Code
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-        run: |
-          aws lambda update-function-code \
-            --function-name xomify-wrapped \
-            --zip-file fileb://wrapped.zip
           sleep 5
 
-      - name: Deploy Wrapped Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
-          aws lambda update-function-configuration \
-            --function-name xomify-wrapped \
-            --layers $LAYER_ARN \
-            --region $AWS_REGION
+          # If layer was updated, also update config
+          if [ "${{ needs.deploy-layer.outputs.layer_arn }}" != "" ]; then
+            echo "Also updating layer for $FUNCTION_NAME"
+            aws lambda update-function-configuration \
+              --function-name $FUNCTION_NAME \
+              --layers ${{ needs.deploy-layer.outputs.layer_arn }} \
+              --region $AWS_REGION
+          fi
 
-      - name: Deploy Friends Lambda Function Code
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
+  summary:
+    needs: [detect-changes, deploy-layer, update-all-lambdas-layer, deploy-changed-lambdas]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment summary
         run: |
-          aws lambda update-function-code \
-            --function-name xomify-friends \
-            --zip-file fileb://friends.zip
-          sleep 5
-
-      - name: Deploy Friends Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
-          aws lambda update-function-configuration \
-            --function-name xomify-friends \
-            --layers $LAYER_ARN \
-            --region $AWS_REGION
-
-      - name: Deploy Release Radar Lambda Function Code
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-        run: |
-          aws lambda update-function-code \
-            --function-name xomify-release-radar \
-            --zip-file fileb://release_radar.zip
-          sleep 5
-
-      - name: Deploy Release Radar Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
-          aws lambda update-function-configuration \
-            --function-name xomify-release-radar \
-            --layers $LAYER_ARN \
-            --region $AWS_REGION
-
-      - name: Deploy User Lambda Function Code
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-        run: |
-          aws lambda update-function-code \
-            --function-name xomify-user \
-            --zip-file fileb://user.zip
-          sleep 5
-
-      - name: Deploy User Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
-          aws lambda update-function-configuration \
-            --function-name xomify-user \
-            --layers $LAYER_ARN \
-            --region $AWS_REGION
-
-      - name: Deploy Wrapped Email Lambda Function Code
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-        run: |
-          aws lambda update-function-code \
-            --function-name xomify-wrapped-email \
-            --zip-file fileb://wrapped_email.zip
-          sleep 5
-
-      - name: Deploy Wrapped Email Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
-          aws lambda update-function-configuration \
-            --function-name xomify-wrapped-email \
-            --layers $LAYER_ARN \
-            --region $AWS_REGION
-
-      - name: Deploy Release Radar Email Lambda Function Code
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-        run: |
-          aws lambda update-function-code \
-            --function-name xomify-release-radar-email \
-            --zip-file fileb://release_radar_email.zip
-          sleep 5
-
-      - name: Deploy Release Radar Email Lambda Configurations
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-          LAYER_ARN: ${{ env.LAYER_ARN }}
-        run: |
-          aws lambda update-function-configuration \
-            --function-name xomify-release-radar-email \
-            --layers $LAYER_ARN \
-            --region $AWS_REGION
+          echo "=== Deployment Summary ==="
+          echo "Common layer changed: ${{ needs.detect-changes.outputs.common_changed }}"
+          echo "Changed lambdas: ${{ needs.detect-changes.outputs.changed_lambdas }}"
+          if [ "${{ needs.deploy-layer.outputs.layer_arn }}" != "" ]; then
+            echo "New layer ARN: ${{ needs.deploy-layer.outputs.layer_arn }}"
+          fi
+          echo "=========================="

@@ -117,7 +117,7 @@ def accept_friend_request(email: str, request_email: str):
                         "UpdateExpression": "SET status = :accepted, acceptedAt = :ts",
                         "ExpressionAttributeValues": {
                             ":accepted": {"S": "accepted"},
-                            ":ts": {"S": _get_timestamp}
+                            ":ts": {"S": _get_timestamp()}
                         }
                     }
                 },
@@ -131,7 +131,7 @@ def accept_friend_request(email: str, request_email: str):
                         "UpdateExpression": "SET status = :accepted, acceptedAt = :ts",
                         "ExpressionAttributeValues": {
                             ":accepted": {"S": "accepted"},
-                            ":ts": {"S": _get_timestamp}
+                            ":ts": {"S": _get_timestamp()}
                         }
                     }
                 }

@@ -21,7 +21,7 @@ from lambdas.common.logger import get_logger
 from lambdas.common.utility_helpers import parse_body, require_fields
 from lambdas.common.friendships_dynamo import list_all_friends_for_user, send_friend_request, accept_friend_request, delete_friends
 from lambdas.common.dynamo_helpers import get_user_table_data, full_table_scan
-from friends_profile_helper import get_user_top_items
+from lambdas.common.friends_profile_helper import get_user_top_items
 
 
 log = get_logger(__file__)
