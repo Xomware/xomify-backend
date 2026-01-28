@@ -60,9 +60,40 @@ jobs:
           echo "all_lambdas=$ALL_LAMBDAS" >> $GITHUB_OUTPUT
           echo "All lambdas: $ALL_LAMBDAS"
 
-  deploy-layer:
+  test-lambdas:
     needs: detect-changes
-    if: needs.detect-changes.outputs.common_changed == 'true'
+    if: needs.detect-changes.outputs.has_lambda_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lambda: ${{ fromJson(needs.detect-changes.outputs.changed_lambdas) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov moto boto3
+
+      - name: Run tests for ${{ matrix.lambda }}
+        run: |
+          if [ -f "tests/test_${{ matrix.lambda }}.py" ]; then
+            echo "Running tests for ${{ matrix.lambda }}"
+            pytest tests/test_${{ matrix.lambda }}.py -v --cov=lambdas/${{ matrix.lambda }}
+          else
+            echo "⚠️  No tests found for ${{ matrix.lambda }}, skipping..."
+          fi
+
+  deploy-layer:
+    needs: [detect-changes, test-lambdas]
+    if: always() && needs.detect-changes.outputs.common_changed == 'true' && (needs.test-lambdas.result == 'success' || needs.test-lambdas.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       layer_arn: ${{ steps.deploy-layer.outputs.layer_arn }}
@@ -124,8 +155,8 @@ jobs:
             --region $AWS_REGION || echo "Function $FUNCTION_NAME not found, skipping..."
 
   deploy-changed-lambdas:
-    needs: [detect-changes, deploy-layer]
-    if: always() && needs.detect-changes.outputs.has_lambda_changes == 'true'
+    needs: [detect-changes, test-lambdas, deploy-layer]
+    if: always() && needs.detect-changes.outputs.has_lambda_changes == 'true' && (needs.test-lambdas.result == 'success' || needs.test-lambdas.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -154,22 +185,34 @@ jobs:
           # Convert underscores to hyphens for AWS function names
           FUNCTION_NAME=$(echo $FUNCTION_NAME | tr '_' '-')
 
-          echo "Deploying $FUNCTION_NAME"
+          echo "Deploying code for $FUNCTION_NAME"
           aws lambda update-function-code \
             --function-name $FUNCTION_NAME \
             --zip-file fileb://${{ matrix.lambda }}.zip \
             --region $AWS_REGION
 
-          sleep 5
+          # Wait for function to finish updating before config change
+          echo "Waiting for function update to complete..."
+          aws lambda wait function-updated \
+            --function-name $FUNCTION_NAME \
+            --region $AWS_REGION
 
-          # If layer was updated, also update config
+          # If layer was updated, also update config (only after code update completes)
           if [ "${{ needs.deploy-layer.outputs.layer_arn }}" != "" ]; then
-            echo "Also updating layer for $FUNCTION_NAME"
+            echo "Updating layer configuration for $FUNCTION_NAME"
             aws lambda update-function-configuration \
               --function-name $FUNCTION_NAME \
               --layers ${{ needs.deploy-layer.outputs.layer_arn }} \
               --region $AWS_REGION
+
+            # Wait for config update to complete
+            echo "Waiting for configuration update to complete..."
+            aws lambda wait function-updated \
+              --function-name $FUNCTION_NAME \
+              --region $AWS_REGION
           fi
+
+          echo "✅ $FUNCTION_NAME deployment complete"
 
   summary:
     needs: [detect-changes, deploy-layer, update-all-lambdas-layer, deploy-changed-lambdas]
