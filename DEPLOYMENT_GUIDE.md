@@ -202,6 +202,30 @@ cron(0 10 ? * SAT *) → xomify-cron-release-radar-email (Saturdays, 10am)
 - `lambdas/authorizer/` - Unchanged
 - `lambdas/update_user_table/` - Unchanged
 
+## Manual Layer Updates
+
+If the layer was published but lambdas weren't updated (e.g., workflow job was skipped), you have two options:
+
+### Option 1: GitHub Actions Workflow (Recommended)
+
+1. Go to Actions tab in GitHub
+2. Select "Update All Lambda Layers" workflow
+3. Click "Run workflow"
+4. Leave layer ARN blank to use latest, or specify a specific ARN
+5. Click "Run workflow"
+
+### Option 2: Local Script
+
+```bash
+# Use latest layer version
+./scripts/update_all_layers.sh
+
+# Use specific layer ARN
+./scripts/update_all_layers.sh arn:aws:lambda:us-east-1:123456789012:layer:xomify-shared-packages:5
+```
+
+See [scripts/README.md](scripts/README.md) for more details.
+
 ## Troubleshooting
 
 ### Tests fail in CI
@@ -215,10 +239,11 @@ pytest tests/test_<lambda_name>.py -v
 - Verify Lambda function names match pattern
 - Check CloudWatch logs for Lambda errors
 
-### Layer not updating
-- Ensure `lambdas/common/` changes are committed
-- Check GitHub Actions logs for layer deployment
-- Verify layer ARN in AWS console
+### Layer not updating all lambdas
+- Check if `update-all-lambdas-layer` job ran in GitHub Actions
+- If skipped, use manual update methods (see "Manual Layer Updates" section above)
+- Run: `./scripts/update_all_layers.sh` to update all lambdas to latest layer
+- Verify layer ARN in AWS Lambda console for each function
 
 ## Next Steps
 

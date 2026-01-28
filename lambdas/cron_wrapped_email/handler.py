@@ -7,11 +7,6 @@ import asyncio
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
 from lambdas.common.utility_helpers import success_response
-
-# Import email function from wrapped_email module
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'wrapped_email'))
 from monthly_wrapped_email import monthly_wrapped_email
 
 log = get_logger(__file__)

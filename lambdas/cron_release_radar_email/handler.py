@@ -7,12 +7,7 @@ import asyncio
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
 from lambdas.common.utility_helpers import success_response
-
-# Import email function from release_radar_email module
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'release_radar_email'))
-from weekly_release_radar_email import weekly_release_radar_email
+from weekly_release_radar_email import release_radar_email_cron_job
 
 log = get_logger(__file__)
 
@@ -23,9 +18,10 @@ HANDLER = 'cron_release_radar_email'
 def handler(event, context):
     log.info("📧 Starting weekly release radar email cron job...")
 
-    successes, failures = asyncio.run(weekly_release_radar_email(event))
+    successes, failures, skipped = asyncio.run(release_radar_email_cron_job(event))
 
     return success_response({
         "successfulEmails": successes,
-        "failedEmails": failures
+        "failedEmails": failures,
+        "skippedEmails": skipped
     }, is_api=False)

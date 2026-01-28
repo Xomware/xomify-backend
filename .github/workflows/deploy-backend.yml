@@ -132,7 +132,7 @@ jobs:
 
   update-all-lambdas-layer:
     needs: [detect-changes, deploy-layer]
-    if: needs.detect-changes.outputs.common_changed == 'true'
+    if: always() && needs.detect-changes.outputs.common_changed == 'true' && needs.deploy-layer.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       matrix:
