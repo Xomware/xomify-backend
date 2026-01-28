@@ -210,15 +210,113 @@ class UserTableError(XomifyError):
 
 
 # ============================================
+# Sensitive Data Masking
+# ============================================
+
+# Fields that should be masked in logs
+SENSITIVE_FIELDS = {
+    'refreshToken', 'refresh_token',
+    'accessToken', 'access_token',
+    'password', 'passwd',
+    'secret', 'apiKey', 'api_key',
+    'authorization', 'Authorization',
+    'x-api-key', 'X-API-Key',
+    'sessionToken', 'session_token',
+    'privateKey', 'private_key',
+    'clientSecret', 'client_secret'
+}
+
+def mask_sensitive_data(data, mask_value="***MASKED***"):
+    """
+    Recursively mask sensitive fields in dictionaries and lists.
+
+    Args:
+        data: Dict, list, or other data structure
+        mask_value: String to replace sensitive values with
+
+    Returns:
+        Masked copy of data
+    """
+    if isinstance(data, dict):
+        masked = {}
+        for key, value in data.items():
+            # Check if key is sensitive
+            if key in SENSITIVE_FIELDS or any(sensitive.lower() in key.lower() for sensitive in ['token', 'password', 'secret', 'key', 'auth']):
+                masked[key] = mask_value
+            else:
+                masked[key] = mask_sensitive_data(value, mask_value)
+        return masked
+    elif isinstance(data, list):
+        return [mask_sensitive_data(item, mask_value) for item in data]
+    elif isinstance(data, str) and len(data) > 100:
+        # Truncate very long strings (might be encoded tokens)
+        return data[:50] + "...[truncated]..." + data[-20:]
+    else:
+        return data
+
+
+def log_error_context(handler_name: str, function_name: str, event: dict, context=None):
+    """
+    Log relevant context information when an error occurs.
+
+    Args:
+        handler_name: Name of the handler
+        function_name: Name of the function
+        event: Lambda event dict
+        context: Lambda context object
+    """
+    try:
+        # Extract useful info
+        http_method = event.get('httpMethod', event.get('requestContext', {}).get('http', {}).get('method', 'N/A'))
+        path = event.get('path', event.get('rawPath', 'N/A'))
+        query_params = mask_sensitive_data(event.get('queryStringParameters', {}))
+        headers = mask_sensitive_data(event.get('headers', {}))
+
+        # Log context
+        log.error(f"📋 Error Context for {handler_name}.{function_name}:")
+        log.error(f"   Method: {http_method}")
+        log.error(f"   Path: {path}")
+        log.error(f"   Query Params: {query_params}")
+        log.error(f"   Headers: {headers}")
+
+        # Log body if present (masked)
+        if event.get('body'):
+            try:
+                body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+                safe_body = mask_sensitive_data(body)
+                log.error(f"   Body: {safe_body}")
+            except:
+                log.error(f"   Body: [Unable to parse]")
+
+        # Log context info if available
+        if context:
+            log.error(f"   Request ID: {getattr(context, 'aws_request_id', 'N/A')}")
+            log.error(f"   Function: {getattr(context, 'function_name', 'N/A')}")
+
+    except Exception as log_error:
+        # Don't let logging errors break error handling
+        log.error(f"⚠️  Error while logging context: {log_error}")
+
+
+# ============================================
 # Error Handler Decorator
 # ============================================
 
-def handle_errors(handler_name: str):
+def handle_errors(handler_name: str, log_context: bool = True):
     """
     Decorator to handle errors consistently across handlers.
-    
+
+    Args:
+        handler_name: Name of the handler for logging
+        log_context: If True, logs event/context details on error (with sensitive data masked)
+
     Usage:
         @handle_errors("wrapped")
+        def handler(event, context):
+            ...
+
+        # Disable context logging for performance
+        @handle_errors("wrapped", log_context=False)
         def handler(event, context):
             ...
     """
@@ -227,13 +325,20 @@ def handle_errors(handler_name: str):
             try:
                 return func(event, context)
             except XomifyError as e:
+                # Log Xomify errors with context
                 e.log_error()
+                if log_context:
+                    log_error_context(handler_name, func.__name__, event, context)
                 return e.to_response()
             except Exception as e:
                 # Catch unexpected errors
                 log.error(f"💥 Unexpected error in {handler_name}: {str(e)}")
                 log.error(traceback.format_exc())
-                
+
+                # Log context for unexpected errors
+                if log_context:
+                    log_error_context(handler_name, func.__name__, event, context)
+
                 error = XomifyError(
                     message=str(e),
                     handler=handler_name,
