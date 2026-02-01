@@ -5,6 +5,7 @@ Generates beautiful HTML emails with Xomify's purple/green branding.
 """
 
 from typing import List
+from lambdas.common.constants import LOGO_URL, XOMIFY_URL
 
 
 def generate_email_html(
@@ -17,15 +18,15 @@ def generate_email_html(
 ) -> str:
     """
     Generate the HTML email for monthly wrapped preview.
-    
+
     Args:
         month_name: Display name like "December 2024"
         top_songs: List of top 5 song names with artists
         top_artists: List of top 5 artist names
         top_genres: List of top 5 genre names
-        xomify_url: Base URL for Xomify
+        xomify_url: Wrapped playlist URL (Spotify link)
         unsubscribe_url: Unsubscribe link
-    
+
     Returns:
         HTML string for the email
     """
@@ -93,7 +94,7 @@ def generate_email_html(
                     <!-- Header with Logo -->
                     <tr>
                         <td align="center" style="padding-bottom: 32px;">
-                            <img src="{xomify_url}/assets/img/banner-logo-x-rework.png" alt="XOMIFY" width="150" style="display: block; max-width: 150px; height: auto;">
+                            <img src="{LOGO_URL}" alt="XOMIFY" width="120" height="auto" style="display: block; border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic;">
                         </td>
                     </tr>
                     
@@ -194,12 +195,22 @@ def generate_email_html(
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                                 <tr>
                                     <td align="center">
-                                        <a href="{xomify_url}/wrapped" 
-                                           style="display: inline-block; background: linear-gradient(135deg, #9c0abf 0%, #7a0896 100%); 
-                                                  color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 30px; 
-                                                  font-size: 16px; font-weight: 600;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{XOMIFY_URL}/wrapped" style="height:48px;v-text-anchor:middle;width:280px;" arcsize="50%" stroke="f" fillcolor="#9c0abf">
+                                        <w:anchorlock/>
+                                        <center>
+                                        <![endif]-->
+                                        <a href="{XOMIFY_URL}/wrapped"
+                                           style="display: inline-block; background-color: #9c0abf;
+                                                  color: #ffffff !important; text-decoration: none; padding: 16px 40px; border-radius: 30px;
+                                                  font-size: 16px; font-weight: 600; line-height: 16px; text-align: center;
+                                                  mso-padding-alt: 0; -webkit-text-size-adjust: none; box-sizing: border-box;">
                                             View Your Full Wrapped →
                                         </a>
+                                        <!--[if mso]>
+                                        </center>
+                                        </v:roundrect>
+                                        <![endif]-->
                                     </td>
                                 </tr>
                             </table>
@@ -214,9 +225,9 @@ def generate_email_html(
                                 You're receiving this because you're enrolled in Xomify Monthly Wrapped.
                             </p>
                             <p style="margin: 0; color: #6a6a7a; font-size: 13px;">
-                                <a href="{unsubscribe_url}" style="color: #9c0abf; text-decoration: underline;">Unsubscribe</a>
+                                <a href="{unsubscribe_url}" style="color: #9c0abf !important; text-decoration: underline;">Unsubscribe</a>
                                 &nbsp;•&nbsp;
-                                <a href="{xomify_url}" style="color: #9c0abf; text-decoration: underline;">Visit Xomify</a>
+                                <a href="{XOMIFY_URL}" style="color: #9c0abf !important; text-decoration: underline;">Visit Xomify</a>
                             </p>
                             <p style="margin: 16px 0 0 0; color: #4a4a5a; font-size: 12px;">
                                 Built with 💜 by @domgiordano

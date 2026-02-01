@@ -6,7 +6,7 @@ HTML email template for weekly release radar notifications.
 
 from datetime import datetime, timedelta
 import random
-from lambdas.common.constants import LOGO_URL
+from lambdas.common.constants import LOGO_URL, XOMIFY_URL
 
 
 def generate_release_radar_email(
@@ -48,58 +48,59 @@ def generate_release_radar_email(
     release_count = stats.get('releaseCount', 0)
     
     return f"""
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="x-apple-disable-message-reformatting">
     <title>Your Weekly Release Radar</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td, a {{ font-family: Arial, Helvetica, sans-serif !important; }}
+    </style>
+    <![endif]-->
 </head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #0a0a14;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #0a0a14;">
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #0a0a14; -webkit-font-smoothing: antialiased;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #0a0a14;">
         <tr>
             <td align="center" style="padding: 40px 20px;">
-                <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width: 600px; width: 100%;">
-                    
-                    <!-- Header -->
+                <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; width: 100%;">
+
+                    <!-- Header with Logo -->
                     <tr>
-                        <td align="center" style="padding-bottom: 30px;">
-                            <img src="{LOGO_URL}" alt="Xomify" width="120" style="display: block;">
+                        <td align="center" style="padding-bottom: 32px;">
+                            <img src="{LOGO_URL}" alt="Xomify" width="120" height="auto" style="display: block; border: 0; outline: none; -ms-interpolation-mode: bicubic;">
                         </td>
                     </tr>
-                    
-                    <!-- Main Card -->
+
+                    <!-- Hero Section with Gradient Title -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 20px; padding: 40px 30px;">
-                            
-                            <!-- Title -->
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                                <tr>
-                                    <td align="center" style="padding-bottom: 10px;">
-                                        <span style="font-size: 32px;">📻</span>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td align="center" style="padding-bottom: 8px;">
-                                        <h1 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff;">
-                                            Your Weekly Release Radar
-                                        </h1>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td align="center" style="padding-bottom: 30px;">
-                                        <p style="margin: 0; font-size: 14px; color: #8a8a9a;">
-                                            {week_display}
-                                        </p>
-                                    </td>
-                                </tr>
-                            </table>
+                        <td style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 24px 24px 0 0; padding: 48px 32px; text-align: center;">
+                            <p style="margin: 0 0 12px 0; color: #8a8a9a; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">
+                                Your weekly new music
+                            </p>
+                            <!-- Gradient text with fallback -->
+                            <h1 style="margin: 0; font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #1bdc6f 0%, #14b85c 50%, #9c0abf 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: #1bdc6f;">
+                                📻 Release Radar
+                            </h1>
+                            <p style="margin: 16px 0 0 0; color: #6a6a7a; font-size: 15px;">
+                                {week_display}
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Content Section -->
+                    <tr>
+                        <td style="background: linear-gradient(180deg, #121225 0%, #0a0a14 100%); padding: 32px;">
                             
                             <!-- Greeting -->
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 28px;">
                                 <tr>
-                                    <td style="padding-bottom: 25px;">
-                                        <p style="margin: 0; font-size: 16px; color: #ffffff; line-height: 1.6;">
+                                    <td align="center" style="padding: 0 0 20px 0;">
+                                        <p style="margin: 0; font-size: 17px; color: #ffffff; line-height: 1.6;">
                                             Hey {user_name}! 👋
                                         </p>
                                         <p style="margin: 10px 0 0 0; font-size: 16px; color: #b0b0c0; line-height: 1.6;">
@@ -138,35 +139,42 @@ def generate_release_radar_email(
                             <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                                 <tr>
                                     <td align="center" style="padding-top: 30px;">
-                                        <a href="{playlist_url}" 
-                                           style="display: inline-block; 
-                                                  background: linear-gradient(135deg, #1db954 0%, #1ed760 100%); 
-                                                  color: #ffffff; 
-                                                  text-decoration: none; 
-                                                  padding: 16px 40px; 
-                                                  border-radius: 30px; 
-                                                  font-size: 16px; 
-                                                  font-weight: 600;
-                                                  box-shadow: 0 4px 15px rgba(29, 185, 84, 0.3);">
-                                            Open Full Playlist →
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{playlist_url}" style="height:48px;v-text-anchor:middle;width:280px;" arcsize="50%" stroke="f" fillcolor="#1db954">
+                                        <w:anchorlock/>
+                                        <center>
+                                        <![endif]-->
+                                        <a href="{playlist_url}"
+                                           style="display: inline-block; background-color: #1db954;
+                                                  color: #ffffff !important; text-decoration: none; padding: 16px 40px; border-radius: 30px;
+                                                  font-size: 16px; font-weight: 600; line-height: 16px; text-align: center;
+                                                  mso-padding-alt: 0; -webkit-text-size-adjust: none; box-sizing: border-box;">
+                                            🎵 Open Full Playlist →
                                         </a>
+                                        <!--[if mso]>
+                                        </center>
+                                        </v:roundrect>
+                                        <![endif]-->
                                     </td>
                                 </tr>
                             </table>
-                            
+
                         </td>
                     </tr>
-                    
+
                     <!-- Footer -->
                     <tr>
-                        <td align="center" style="padding: 30px 20px;">
-                            <p style="margin: 0 0 10px 0; font-size: 12px; color: #6a6a7a;">
-                                You're receiving this because you enrolled in Release Radar on Xomify.
+                        <td style="background: #0a0a14; border-radius: 0 0 24px 24px; padding: 32px; text-align: center; border-top: 1px solid rgba(255,255,255,0.06);">
+                            <p style="margin: 0 0 16px 0; color: #6a6a7a; font-size: 13px;">
+                                You're receiving this because you're enrolled in Xomify Release Radar.
                             </p>
-                            <p style="margin: 0; font-size: 12px; color: #6a6a7a;">
-                                <a href="https://xomify.com/release-radar" style="color: #9c0abf; text-decoration: none;">Manage preferences</a>
+                            <p style="margin: 0; color: #6a6a7a; font-size: 13px;">
+                                <a href="{XOMIFY_URL}/settings" style="color: #9c0abf !important; text-decoration: underline;">Manage preferences</a>
                                 &nbsp;•&nbsp;
-                                <a href="https://xomify.com" style="color: #9c0abf; text-decoration: none;">Visit Xomify</a>
+                                <a href="{XOMIFY_URL}" style="color: #9c0abf !important; text-decoration: underline;">Visit Xomify</a>
+                            </p>
+                            <p style="margin: 16px 0 0 0; color: #4a4a5a; font-size: 12px;">
+                                Built with 💜 by @domgiordano
                             </p>
                         </td>
                     </tr>
