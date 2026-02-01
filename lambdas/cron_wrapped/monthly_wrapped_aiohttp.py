@@ -47,7 +47,7 @@ async def aiohttp_wrapped_chron_job(event) -> list:
     
     if not wrapped_users:
         log.info("No active users to process")
-        return []
+        return [], []
     
     # Get the month key for this run
     month_key = get_last_month_key()
@@ -82,8 +82,8 @@ async def aiohttp_wrapped_chron_job(event) -> list:
     log.info(f"   ✅ Success: {len(successes)}")
     log.info(f"   ❌ Failed: {len(failures)}")
     log.info("=" * 50)
-    
-    return successes
+
+    return successes, failures
 
 
 async def process_wrapped_user(user: dict, session: aiohttp.ClientSession, month_key: str) -> str:
