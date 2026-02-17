@@ -10,6 +10,21 @@ from unittest.mock import MagicMock
 # Add lambdas to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+# Set required env vars before any lambda modules are imported
+_TEST_ENV_VARS = {
+    "DYNAMODB_KMS_ALIAS": "alias/xomify-kms-test",
+    "USERS_TABLE_NAME": "xomify-users-test",
+    "WRAPPED_HISTORY_TABLE_NAME": "xomify-wrapped-history-test",
+    "RELEASE_RADAR_HISTORY_TABLE_NAME": "xomify-release-radar-history-test",
+    "FRIENDSHIPS_TABLE_NAME": "xomify-friendships-test",
+    "GROUPS_TABLE_NAME": "xomify-groups-test",
+    "GROUP_MEMBERS_TABLE_NAME": "xomify-group-members-test",
+    "GROUP_TRACKS_TABLE_NAME": "xomify-group-tracks-test",
+    "TRACK_RATINGS_TABLE_NAME": "xomify-track-ratings-test",
+}
+for key, value in _TEST_ENV_VARS.items():
+    os.environ.setdefault(key, value)
+
 
 @pytest.fixture
 def mock_context():
