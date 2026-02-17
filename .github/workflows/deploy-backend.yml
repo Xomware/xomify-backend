@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: "Deploy ALL lambdas (ignore change detection)"
+        required: false
+        type: boolean
+        default: true
 
 env:
   AWS_REGION: "us-east-1"
@@ -25,31 +32,43 @@ jobs:
       - name: Detect changes
         id: changes
         run: |
-          # Get changed files between current and previous commit
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
+          DEPLOY_ALL="${{ github.event.inputs.deploy_all }}"
 
-          # Check if common layer changed
-          if echo "$CHANGED_FILES" | grep -q "^lambdas/common/"; then
+          if [ "$DEPLOY_ALL" == "true" ]; then
+            echo "Deploy all requested - marking everything as changed"
             echo "common=true" >> $GITHUB_OUTPUT
-          else
-            echo "common=false" >> $GITHUB_OUTPUT
-          fi
 
-          # Find changed lambda folders (excluding common) and format as JSON array
-          CHANGED_LAMBDAS=$(echo "$CHANGED_FILES" | grep "^lambdas/" | grep -v "^lambdas/common/" | cut -d'/' -f2 | sort -u | grep -v '^$' || true)
-
-          if [ -n "$CHANGED_LAMBDAS" ]; then
-            # Convert to JSON array
-            JSON_ARRAY=$(echo "$CHANGED_LAMBDAS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-            echo "changed_lambdas=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            ALL_LAMBDAS=$(ls -d lambdas/*/ 2>/dev/null | grep -v "lambdas/common" | xargs -n1 basename | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "changed_lambdas=$ALL_LAMBDAS" >> $GITHUB_OUTPUT
             echo "has_lambda_changes=true" >> $GITHUB_OUTPUT
-            echo "Changed lambdas: $JSON_ARRAY"
+            echo "Deploying all lambdas: $ALL_LAMBDAS"
           else
-            echo "changed_lambdas=[]" >> $GITHUB_OUTPUT
-            echo "has_lambda_changes=false" >> $GITHUB_OUTPUT
-            echo "No lambda changes detected"
+            # Get changed files between current and previous commit
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+            echo "Changed files:"
+            echo "$CHANGED_FILES"
+
+            # Check if common layer changed
+            if echo "$CHANGED_FILES" | grep -q "^lambdas/common/"; then
+              echo "common=true" >> $GITHUB_OUTPUT
+            else
+              echo "common=false" >> $GITHUB_OUTPUT
+            fi
+
+            # Find changed lambda folders (excluding common) and format as JSON array
+            CHANGED_LAMBDAS=$(echo "$CHANGED_FILES" | grep "^lambdas/" | grep -v "^lambdas/common/" | cut -d'/' -f2 | sort -u | grep -v '^$' || true)
+
+            if [ -n "$CHANGED_LAMBDAS" ]; then
+              # Convert to JSON array
+              JSON_ARRAY=$(echo "$CHANGED_LAMBDAS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+              echo "changed_lambdas=$JSON_ARRAY" >> $GITHUB_OUTPUT
+              echo "has_lambda_changes=true" >> $GITHUB_OUTPUT
+              echo "Changed lambdas: $JSON_ARRAY"
+            else
+              echo "changed_lambdas=[]" >> $GITHUB_OUTPUT
+              echo "has_lambda_changes=false" >> $GITHUB_OUTPUT
+              echo "No lambda changes detected"
+            fi
           fi
 
       - name: Get all lambda folders
