@@ -30,11 +30,13 @@ Enhanced the `@handle_errors` decorator to automatically log request context on 
 ### [lambdas/common/errors.py](lambdas/common/errors.py)
 
 **Added:**
+
 - `mask_sensitive_data()` - Recursively masks sensitive fields
 - `log_error_context()` - Logs request context with masking
 - Enhanced `@handle_errors()` decorator with `log_context` parameter
 
 **Sensitive Fields List:**
+
 ```python
 SENSITIVE_FIELDS = {
     'refreshToken', 'refresh_token',
@@ -120,7 +122,7 @@ When an error occurs in production, you'll see:
 2024-01-28 10:30:45 ERROR:    Method: POST
 2024-01-28 10:30:45 ERROR:    Path: /friends/accept
 2024-01-28 10:30:45 ERROR:    Query Params: {}
-2024-01-28 10:30:45 ERROR:    Headers: {'Content-Type': 'application/json', 'Host': 'api.xomify.com', 'Authorization': '***MASKED***'}
+2024-01-28 10:30:45 ERROR:    Headers: {'Content-Type': 'application/json', 'Host': 'api.xomify.xomware.com', 'Authorization': '***MASKED***'}
 2024-01-28 10:30:45 ERROR:    Body: {'email': 'user@example.com', 'requestEmail': 'friend@example.com'}
 2024-01-28 10:30:45 ERROR:    Request ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 2024-01-28 10:30:45 ERROR:    Function: xomify-friends-accept
@@ -144,6 +146,7 @@ pytest tests/test_error_handling.py::test_mask_authorization_header -v
 ### Existing Handlers - No Changes Needed! ✅
 
 All existing handlers using `@handle_errors()` will automatically get:
+
 - ✅ Context logging on errors
 - ✅ Sensitive data masking
 - ✅ Enhanced error messages
@@ -197,6 +200,7 @@ fields @timestamp, @message
 ## Future Enhancements
 
 Potential additions:
+
 - [ ] Mask credit card numbers
 - [ ] Mask email addresses (optional)
 - [ ] Configurable masking rules per handler

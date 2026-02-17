@@ -283,7 +283,7 @@ def build_preview_section(previews: list) -> str:
     
     preview_items = ""
     for release in previews:
-        image_url = release.get('imageUrl') or 'https://xomify.com/assets/default-album.png'
+        image_url = release.get('imageUrl') or 'https://xomify.xomware.com/assets/default-album.png'
         # Use albumName (our field name) with fallback to name
         name = (release.get('albumName') or release.get('name') or 'Unknown Release')[:40]
         artist = (release.get('artistName') or 'Unknown Artist')[:30]
@@ -378,5 +378,5 @@ View your full playlist:
 
 ---
 You're receiving this because you enrolled in Release Radar on Xomify.
-Manage preferences: https://xomify.com/release-radar
+Manage preferences: https://xomify.xomware.com/release-radar
 """

@@ -27,8 +27,8 @@ GROUP_TRACKS_TABLE_NAME = os.environ['GROUP_TRACKS_TABLE_NAME']
 TRACK_RATINGS_TABLE_NAME = os.environ['TRACK_RATINGS_TABLE_NAME']
 
 # Email Service
-FROM_EMAIL = os.environ.get('FROM_EMAIL', 'noreply@xomify.com')
-XOMIFY_URL = "https://xomify.com"
+FROM_EMAIL = os.environ.get('FROM_EMAIL', 'noreply@xomify.xomware.com')
+XOMIFY_URL = "https://xomify.xomware.com"
 
 # LOGO URL
 LOGO_URL = f"{XOMIFY_URL}/assets/img/logo-x-rework.png"

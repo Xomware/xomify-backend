@@ -68,7 +68,7 @@ class Spotify:
             self.monthly_spotify_playlist = Playlist(
                 self.user_id,
                 f"Xomify {self.last_month}'{self.this_year}", 
-                f"Your Top 25 songs for {self.last_month} - Created by xomify.com", 
+                f"Your Top 25 songs for {self.last_month} - Created by xomify.xomware.com", 
                 self.headers,
                 self.aiohttp_session
             )
@@ -77,7 +77,7 @@ class Spotify:
             self.first_half_of_year_spotify_playlist = Playlist(
                 self.user_id,
                 f"Xomify First Half '{self.this_year}",
-                f"Your Top 25 songs for the First 6 months of '{self.this_year} - Created by xomify.com",
+                f"Your Top 25 songs for the First 6 months of '{self.this_year} - Created by xomify.xomware.com",
                 self.headers,
                 self.aiohttp_session
             )
@@ -86,7 +86,7 @@ class Spotify:
             self.full_year_spotify_playlist = Playlist(
                 self.user_id,
                 f"Xomify 20{self.this_year}",
-                f"Your Top 25 songs for 20{self.this_year} - Created by xomify.com",
+                f"Your Top 25 songs for 20{self.this_year} - Created by xomify.xomware.com",
                 self.headers,
                 self.aiohttp_session
             )
@@ -135,7 +135,7 @@ class Spotify:
             self.release_radar_playlist = Playlist(
                 self.user_id,
                 "Xomify Weekly Release Radar",
-                "All your followed artists newest songs - Created by xomify.com",
+                "All your followed artists newest songs - Created by xomify.xomware.com",
                 self.headers,
                 self.aiohttp_session
             )
