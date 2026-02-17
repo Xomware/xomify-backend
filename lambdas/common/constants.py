@@ -2,7 +2,7 @@ import os
 
 # General
 AWS_DEFAULT_REGION ='us-east-1'
-AWS_ACCOUNT_ID = os.environ['AWS_ACCOUNT_ID']
+AWS_ACCOUNT_ID = os.environ.get('AWS_ACCOUNT_ID', '')
 PRODUCT = 'xomify'
 
 # Headers

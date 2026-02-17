@@ -6,8 +6,21 @@ on:
       - master
   workflow_dispatch:
     inputs:
-      deploy_all:
-        description: "Deploy ALL lambdas (ignore change detection)"
+      deploy_mode:
+        description: "What to deploy"
+        required: true
+        type: choice
+        default: "all"
+        options:
+          - all
+          - specific
+      specific_lambdas:
+        description: "Comma-separated lambda names (only used when deploy_mode=specific). e.g. authorizer,user_data,ratings_all"
+        required: false
+        type: string
+        default: ""
+      deploy_common_layer:
+        description: "Also redeploy the common layer"
         required: false
         type: boolean
         default: true
@@ -32,9 +45,11 @@ jobs:
       - name: Detect changes
         id: changes
         run: |
-          DEPLOY_ALL="${{ github.event.inputs.deploy_all }}"
+          DEPLOY_MODE="${{ github.event.inputs.deploy_mode }}"
+          SPECIFIC_LAMBDAS="${{ github.event.inputs.specific_lambdas }}"
+          DEPLOY_COMMON="${{ github.event.inputs.deploy_common_layer }}"
 
-          if [ "$DEPLOY_ALL" == "true" ]; then
+          if [ "$DEPLOY_MODE" == "all" ]; then
             echo "Deploy all requested - marking everything as changed"
             echo "common=true" >> $GITHUB_OUTPUT
 
@@ -42,6 +57,22 @@ jobs:
             echo "changed_lambdas=$ALL_LAMBDAS" >> $GITHUB_OUTPUT
             echo "has_lambda_changes=true" >> $GITHUB_OUTPUT
             echo "Deploying all lambdas: $ALL_LAMBDAS"
+
+          elif [ "$DEPLOY_MODE" == "specific" ] && [ -n "$SPECIFIC_LAMBDAS" ]; then
+            echo "Deploying specific lambdas: $SPECIFIC_LAMBDAS"
+
+            if [ "$DEPLOY_COMMON" == "true" ]; then
+              echo "common=true" >> $GITHUB_OUTPUT
+            else
+              echo "common=false" >> $GITHUB_OUTPUT
+            fi
+
+            # Convert comma-separated string to JSON array
+            JSON_ARRAY=$(echo "$SPECIFIC_LAMBDAS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "changed_lambdas=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo "has_lambda_changes=true" >> $GITHUB_OUTPUT
+            echo "Selected lambdas: $JSON_ARRAY"
+
           else
             # Get changed files between current and previous commit
             CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
