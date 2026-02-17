@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Set required env vars before any lambda modules are imported
 _TEST_ENV_VARS = {
+    "AWS_DEFAULT_REGION": "us-east-1",
     "DYNAMODB_KMS_ALIAS": "alias/xomify-kms-test",
     "USERS_TABLE_NAME": "xomify-users-test",
     "WRAPPED_HISTORY_TABLE_NAME": "xomify-wrapped-history-test",
