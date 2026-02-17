@@ -5,10 +5,10 @@ Tests for wrapped_data_get lambda
 import pytest
 import json
 from unittest.mock import patch
-from lambdas.wrapped_data_get.handler import handler
+from lambdas.wrapped_all.handler import handler
 
 
-@patch('lambdas.wrapped_data_get.handler.get_wrapped_data')
+@patch('lambdas.wrapped_all.handler.get_wrapped_data')
 def test_wrapped_data_get_success(mock_get_wrapped, mock_context, api_gateway_event):
     """Test successful wrapped data retrieval"""
     # Setup
@@ -39,7 +39,7 @@ def test_wrapped_data_get_success(mock_get_wrapped, mock_context, api_gateway_ev
     assert len(body['wraps']) == 2
 
 
-@patch('lambdas.wrapped_data_get.handler.get_wrapped_data')
+@patch('lambdas.wrapped_all.handler.get_wrapped_data')
 def test_wrapped_data_get_no_history(mock_get_wrapped, mock_context, api_gateway_event):
     """Test user with no wrapped history"""
     # Setup
@@ -65,7 +65,7 @@ def test_wrapped_data_get_no_history(mock_get_wrapped, mock_context, api_gateway
     assert len(body['wraps']) == 0
 
 
-@patch('lambdas.wrapped_data_get.handler.get_wrapped_data')
+@patch('lambdas.wrapped_all.handler.get_wrapped_data')
 def test_wrapped_data_get_missing_email(mock_get_wrapped, mock_context, api_gateway_event):
     """Test missing email parameter"""
     # Setup

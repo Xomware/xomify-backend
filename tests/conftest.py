@@ -26,6 +26,19 @@ _TEST_ENV_VARS = {
 for key, value in _TEST_ENV_VARS.items():
     os.environ.setdefault(key, value)
 
+# Mock ssm_helpers BEFORE any lambda modules import it.
+# ssm_helpers.py makes real AWS SSM API calls at module level which will
+# fail in CI without credentials. We inject a fake module into sys.modules
+# so any `from lambdas.common.ssm_helpers import ...` gets test values.
+import types
+_mock_ssm = types.ModuleType("lambdas.common.ssm_helpers")
+_mock_ssm.SPOTIFY_CLIENT_ID = "test-spotify-client-id"
+_mock_ssm.SPOTIFY_CLIENT_SECRET = "test-spotify-client-secret"
+_mock_ssm.AWS_ACCESS_KEY = "test-aws-access-key"
+_mock_ssm.AWS_SECRET_KEY = "test-aws-secret-key"
+_mock_ssm.API_SECRET_KEY = "test-api-secret-key"
+sys.modules["lambdas.common.ssm_helpers"] = _mock_ssm
+
 
 @pytest.fixture
 def mock_context():

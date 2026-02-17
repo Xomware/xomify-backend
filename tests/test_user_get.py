@@ -4,10 +4,10 @@ Tests for user_get lambda
 
 import pytest
 from unittest.mock import patch, MagicMock
-from lambdas.user_get.handler import handler
+from lambdas.user_data.handler import handler
 
 
-@patch('lambdas.user_get.handler.get_user_table_data')
+@patch('lambdas.user_data.handler.get_user_table_data')
 def test_user_get_success(mock_get_user, mock_context, api_gateway_event, sample_user):
     """Test successful user retrieval"""
     # Setup
@@ -27,7 +27,7 @@ def test_user_get_success(mock_get_user, mock_context, api_gateway_event, sample
     mock_get_user.assert_called_once_with('test@example.com')
 
 
-@patch('lambdas.user_get.handler.get_user_table_data')
+@patch('lambdas.user_data.handler.get_user_table_data')
 def test_user_get_missing_email(mock_get_user, mock_context, api_gateway_event):
     """Test missing email parameter"""
     # Setup
@@ -46,7 +46,7 @@ def test_user_get_missing_email(mock_get_user, mock_context, api_gateway_event):
     assert 'error' in response['body'].lower()
 
 
-@patch('lambdas.user_get.handler.get_user_table_data')
+@patch('lambdas.user_data.handler.get_user_table_data')
 def test_user_get_not_found(mock_get_user, mock_context, api_gateway_event):
     """Test user not found"""
     # Setup
