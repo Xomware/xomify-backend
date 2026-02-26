@@ -4,14 +4,17 @@ XOMIFY Weekly Release Radar Cron Job
 Processes release radar for all enrolled users.
 
 Schedule: Runs every Saturday morning (~2 AM Eastern)
-Week Definition: Saturday 00:00:00 to Friday 23:59:59
+Week Definition: Saturday 00:00:00 to Thursday 23:59:59
+
+Friday releases are excluded from the capture window so that New Music
+Friday drops are not double-counted across weekly boundaries.
 
 Flow:
-1. Get the PREVIOUS week (last Saturday through yesterday Friday)
+1. Get the PREVIOUS week (last Saturday through last Thursday)
 2. For each enrolled user:
    a. Get all followed artists
-   b. Fetch releases from that week
-   c. Save to DynamoDB history
+   b. Fetch releases from that week (Sat-Thu, Friday excluded)
+   c. Save to DynamoDB history (flat list + artist-grouped structure)
    d. Create/update Spotify playlist
 3. Email sender runs 15 min later
 """
@@ -55,7 +58,7 @@ async def release_radar_cron_job(event) -> tuple[list, list]:
     start_date, end_date = get_week_date_range(week_key)
     
     log.info(f"Processing week: {week_key}")
-    log.info(f"Date range: {start_date.strftime('%Y-%m-%d')} (Sat) to {end_date.strftime('%Y-%m-%d')} (Fri)")
+    log.info(f"Date range: {start_date.strftime('%Y-%m-%d')} (Sat) to {end_date.strftime('%Y-%m-%d')} (Thu) — Friday excluded")
     log.info(f"Display: {format_week_display(week_key)}")
     
     # Get active users
@@ -213,15 +216,20 @@ async def fetch_releases_for_week(
 ) -> list:
     """
     Fetch all releases from followed artists within the week.
-    
+
+    The date window is Saturday 00:00 → Thursday 23:59 (Friday excluded).
+    Results are returned as a flat list ordered by releaseDate descending
+    (newest first). Grouping by artist is performed later in
+    ``save_release_radar_week``.
+
     Args:
         spotify: Spotify client
         artist_ids: List of artist IDs to check
-        start_date: Saturday start of week
-        end_date: Friday end of week
-        
+        start_date: Saturday start of week (00:00:00)
+        end_date: Thursday end of week (23:59:59) — Friday excluded
+
     Returns:
-        List of normalized release objects
+        List of normalized release objects, sorted by releaseDate descending
     """
     releases = []
     seen_ids = set()
