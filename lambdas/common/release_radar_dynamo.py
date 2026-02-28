@@ -10,12 +10,12 @@ Table Structure:
 - stats: { artistCount, releaseCount, trackCount, albumCount, singleCount }
 - playlistId: string
 - startDate: string "YYYY-MM-DD" (Saturday)
-- endDate: string "YYYY-MM-DD" (Friday)
+- endDate: string "YYYY-MM-DD" (Thursday)
 - createdAt: ISO timestamp
 
-Week Definition: Saturday 00:00:00 to Friday 23:59:59
-- Cron runs Saturday morning to process the week that just ended (last Sat - yesterday Fri)
-- This captures all "New Music Friday" releases
+Week Definition: Saturday 00:00:00 to Thursday 23:59:59
+- Cron runs Saturday morning to process the week that just ended (last Sat - yesterday Thu)
+- Friday is excluded to avoid capturing back-dated "last Friday" releases
 """
 
 from datetime import datetime, timezone, timedelta
@@ -77,13 +77,14 @@ def get_week_key(target_date: datetime = None) -> str:
 
 def get_previous_week_key() -> str:
     """
-    Get the week key for the PREVIOUS week (the one that just ended Friday).
-    
+    Get the week key for the PREVIOUS week (the one that just ended Thursday).
+
     Used by the cron job which runs Saturday morning to process
-    the week that ended Friday night.
-    
+    the week that ended Thursday night.  Going back one day from Saturday
+    lands on Friday, which still maps to the previous Saturday's week key.
+
     Returns:
-        Week key for last Saturday-Friday
+        Week key for last Saturday-Thursday
     """
     # Go back 1 day to get into the previous week (from Saturday -> Friday)
     yesterday = datetime.now() - timedelta(days=1)
@@ -92,15 +93,18 @@ def get_previous_week_key() -> str:
 
 def get_week_date_range(week_key: str) -> tuple[datetime, datetime]:
     """
-    Get the Saturday-Friday date range for a week key.
-    
+    Get the Saturday-Thursday date range for a week key.
+
+    Friday is excluded so that back-dated "New Music Friday" releases
+    from the prior week are not included in the current week's radar.
+
     Args:
         week_key: Week key in "YYYY-WW" format
-        
+
     Returns:
         Tuple of (start_date, end_date) as datetime objects
         start_date = Saturday 00:00:00
-        end_date = Friday 23:59:59
+        end_date = Thursday 23:59:59
     """
     year, week = map(int, week_key.split('-'))
     
@@ -113,11 +117,12 @@ def get_week_date_range(week_key: str) -> tuple[datetime, datetime]:
     saturday = monday_of_week + timedelta(days=5)
     saturday = saturday.replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # Friday is 6 days after Saturday
-    friday = saturday + timedelta(days=6)
-    friday = friday.replace(hour=23, minute=59, second=59, microsecond=999999)
-    
-    return saturday, friday
+    # Thursday is 5 days after Saturday (exclude Friday to avoid including
+    # "last Friday" releases that Spotify sometimes back-dates into the prior week)
+    thursday = saturday + timedelta(days=5)
+    thursday = thursday.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    return saturday, thursday
 
 
 def get_current_week_date_range() -> tuple[datetime, datetime]:

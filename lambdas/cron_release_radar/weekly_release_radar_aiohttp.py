@@ -4,10 +4,11 @@ XOMIFY Weekly Release Radar Cron Job
 Processes release radar for all enrolled users.
 
 Schedule: Runs every Saturday morning (~2 AM Eastern)
-Week Definition: Saturday 00:00:00 to Friday 23:59:59
+Week Definition: Saturday 00:00:00 to Thursday 23:59:59
+(Friday excluded to avoid back-dated "New Music Friday" releases)
 
 Flow:
-1. Get the PREVIOUS week (last Saturday through yesterday Friday)
+1. Get the PREVIOUS week (last Saturday through last Thursday)
 2. For each enrolled user:
    a. Get all followed artists
    b. Fetch releases from that week
@@ -55,7 +56,7 @@ async def release_radar_cron_job(event) -> tuple[list, list]:
     start_date, end_date = get_week_date_range(week_key)
     
     log.info(f"Processing week: {week_key}")
-    log.info(f"Date range: {start_date.strftime('%Y-%m-%d')} (Sat) to {end_date.strftime('%Y-%m-%d')} (Fri)")
+    log.info(f"Date range: {start_date.strftime('%Y-%m-%d')} (Sat) to {end_date.strftime('%Y-%m-%d')} (Thu)")
     log.info(f"Display: {format_week_display(week_key)}")
     
     # Get active users
