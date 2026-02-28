@@ -11,8 +11,8 @@ Flow:
 1. Get the PREVIOUS week (last Saturday through last Thursday)
 2. For each enrolled user:
    a. Get all followed artists
-   b. Fetch releases from that week
-   c. Save to DynamoDB history
+   b. Fetch releases from that week (Sat-Thu, Friday excluded)
+   c. Save to DynamoDB history (flat list + artist-grouped structure)
    d. Create/update Spotify playlist
 3. Email sender runs 15 min later
 """
@@ -214,15 +214,20 @@ async def fetch_releases_for_week(
 ) -> list:
     """
     Fetch all releases from followed artists within the week.
-    
+
+    The date window is Saturday 00:00 → Thursday 23:59 (Friday excluded).
+    Results are returned as a flat list ordered by releaseDate descending
+    (newest first). Grouping by artist is performed later in
+    ``save_release_radar_week``.
+
     Args:
         spotify: Spotify client
         artist_ids: List of artist IDs to check
-        start_date: Saturday start of week
-        end_date: Friday end of week
-        
+        start_date: Saturday start of week (00:00:00)
+        end_date: Thursday end of week (23:59:59) — Friday excluded
+
     Returns:
-        List of normalized release objects
+        List of normalized release objects, sorted by releaseDate descending
     """
     releases = []
     seen_ids = set()

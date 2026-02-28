@@ -6,7 +6,8 @@ Database operations for release radar history table.
 Table Structure:
 - PK: email (string)
 - SK: weekKey (string) - format "YYYY-WW" (e.g., "2025-02")
-- releases: list of release objects
+- releases: list of release objects (flat, ordered by releaseDate desc)
+- groupedReleases: releases grouped by artist, ordered by releaseDate desc
 - stats: { artistCount, releaseCount, trackCount, albumCount, singleCount }
 - playlistId: string
 - startDate: string "YYYY-MM-DD" (Saturday)
@@ -86,7 +87,8 @@ def get_previous_week_key() -> str:
     Returns:
         Week key for last Saturday-Thursday
     """
-    # Go back 1 day to get into the previous week (from Saturday -> Friday)
+    # Go back 1 day from Saturday to land in Friday, which still belongs to
+    # the previous week (Saturday-Thursday window).
     yesterday = datetime.now() - timedelta(days=1)
     return get_week_key(yesterday)
 
@@ -107,12 +109,12 @@ def get_week_date_range(week_key: str) -> tuple[datetime, datetime]:
         end_date = Thursday 23:59:59
     """
     year, week = map(int, week_key.split('-'))
-    
+
     # Find Monday of that ISO week
     jan_4 = datetime(year, 1, 4)  # Jan 4 is always in week 1
     start_of_week_1 = jan_4 - timedelta(days=jan_4.weekday())  # Monday of week 1
     monday_of_week = start_of_week_1 + timedelta(weeks=week - 1)
-    
+
     # Our week starts on Saturday (5 days after Monday)
     saturday = monday_of_week + timedelta(days=5)
     saturday = saturday.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -150,6 +152,64 @@ def format_week_display(week_key: str) -> str:
 
 
 # ============================================
+# Release Grouping Helpers
+# ============================================
+
+def group_releases_by_artist(releases: list) -> list:
+    """
+    Group a flat list of releases by artist, ordering releases within each
+    artist group by release date (newest first) and ordering the artist
+    groups themselves by their most-recent release date.
+
+    Args:
+        releases: Flat list of release objects (each has artistId, artistName,
+                  releaseDate, albumName, albumType, etc.)
+
+    Returns:
+        List of artist group dicts, each shaped as::
+
+            {
+                "artistId":   str,
+                "artistName": str,
+                "releases":   [release, ...],   # newest first
+            }
+
+        The outer list is ordered by the newest releaseDate within each
+        artist group (most-recently-active artist first).
+    """
+    artist_map: dict[str, dict] = {}
+
+    for release in releases:
+        artist_id = release.get('artistId') or 'unknown'
+        artist_name = release.get('artistName') or 'Unknown Artist'
+
+        if artist_id not in artist_map:
+            artist_map[artist_id] = {
+                'artistId': artist_id,
+                'artistName': artist_name,
+                'releases': [],
+            }
+
+        artist_map[artist_id]['releases'].append(release)
+
+    # Sort releases within each artist group by releaseDate descending
+    for group in artist_map.values():
+        group['releases'].sort(
+            key=lambda r: r.get('releaseDate') or '',
+            reverse=True,
+        )
+
+    # Sort artist groups by the newest release date in each group
+    grouped = sorted(
+        artist_map.values(),
+        key=lambda g: g['releases'][0].get('releaseDate') or '' if g['releases'] else '',
+        reverse=True,
+    )
+
+    return grouped
+
+
+# ============================================
 # Save Release Radar Week
 # ============================================
 
@@ -161,67 +221,83 @@ def save_release_radar_week(
 ) -> dict:
     """
     Save a week's release radar data to the history table.
-    
+
+    Persists both a flat, date-ordered ``releases`` list and a
+    ``groupedReleases`` list (artist → sorted releases) for use by
+    frontend and email consumers.
+
     Args:
         email: User's email (partition key)
         week_key: Format "YYYY-WW" (sort key)
-        releases: List of release objects
+        releases: Flat list of release objects, ordered by releaseDate desc
         playlist_id: Optional Spotify playlist ID
-        
+
     Returns:
         The saved item
     """
     try:
         log.info(f"Saving release radar week for {email} - {week_key}")
-        
+
         table = dynamodb.Table(RELEASE_RADAR_HISTORY_TABLE_NAME)
-        
+
         # Get date range for this week
         start_date, end_date = get_week_date_range(week_key)
-        
+
+        # Ensure flat list is ordered by releaseDate descending
+        sorted_releases = sorted(
+            releases,
+            key=lambda r: r.get('releaseDate') or '',
+            reverse=True,
+        )
+
         # Calculate stats
         unique_artists = set()
         album_count = 0
         single_count = 0
         total_tracks = 0
-        
-        for r in releases:
+
+        for r in sorted_releases:
             artist_id = r.get('artistId')
             if artist_id:
                 unique_artists.add(artist_id)
-            
+
             album_type = (r.get('albumType') or r.get('album_type') or '').lower()
             if album_type == 'album':
                 album_count += 1
             elif album_type == 'single':
                 single_count += 1
-            
+
             total_tracks += r.get('totalTracks') or r.get('total_tracks') or 1
-        
+
         stats = {
             'artistCount': len(unique_artists),
-            'releaseCount': len(releases),
+            'releaseCount': len(sorted_releases),
             'trackCount': total_tracks,
             'albumCount': album_count,
-            'singleCount': single_count
+            'singleCount': single_count,
         }
-        
+
+        # Build artist-grouped structure
+        grouped_releases = group_releases_by_artist(sorted_releases)
+
         item = {
             'email': email,
             'weekKey': week_key,
-            'releases': releases,
+            'releases': sorted_releases,
+            'groupedReleases': grouped_releases,
             'stats': stats,
             'playlistId': playlist_id,
             'startDate': start_date.strftime('%Y-%m-%d'),
             'endDate': end_date.strftime('%Y-%m-%d'),
-            'createdAt': _get_timestamp()
+            'createdAt': _get_timestamp(),
         }
-        
+
         table.put_item(Item=item)
-        
-        log.info(f"Saved release radar for {email} - {week_key}: {len(releases)} releases")
+
+        log.info(f"Saved release radar for {email} - {week_key}: {len(sorted_releases)} releases "
+                 f"across {len(grouped_releases)} artists")
         return item
-        
+
     except Exception as err:
         log.error(f"Save release radar week failed: {err}")
         raise DynamoDBError(
