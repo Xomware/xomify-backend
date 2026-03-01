@@ -125,7 +125,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -155,13 +155,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Package layer
         run: |
           mkdir -p python/lambdas
           cp -r lambdas/common python/lambdas/
-          python3.10 -m pip install --platform manylinux2014_x86_64 --only-binary=:all: -t python/ -r requirements.txt
+          python3.12 -m pip install --platform manylinux2014_x86_64 --only-binary=:all: -t python/ -r requirements.txt
           zip -r xomify-shared-packages.zip python
 
       - name: Deploy layer
@@ -173,7 +173,7 @@ jobs:
           LAYER_OUTPUT=$(aws lambda publish-layer-version \
             --layer-name xomify-shared-packages \
             --zip-file fileb://xomify-shared-packages.zip \
-            --compatible-runtimes python3.10 \
+            --compatible-runtimes python3.12 \
             --region $AWS_REGION \
             --output json)
 
@@ -199,9 +199,10 @@ jobs:
           # Convert underscores to hyphens for AWS function names
           FUNCTION_NAME=$(echo $FUNCTION_NAME | tr '_' '-')
 
-          echo "Updating layer for $FUNCTION_NAME"
+          echo "Updating layer and runtime for $FUNCTION_NAME"
           aws lambda update-function-configuration \
             --function-name $FUNCTION_NAME \
+            --runtime python3.12 \
             --layers ${{ needs.deploy-layer.outputs.layer_arn }} \
             --region $AWS_REGION || echo "Function $FUNCTION_NAME not found, skipping..."
 
@@ -220,7 +221,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Package lambda
         run: |

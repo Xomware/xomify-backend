@@ -1,5 +1,6 @@
-# Python 3.10
+# Python 3.12
 aiohttp==3.12.15
+async_timeout==5.0.1
 annotated-types==0.7.0
 cffi==1.16.0
 charset-normalizer==3.3.2
