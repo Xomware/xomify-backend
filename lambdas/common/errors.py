@@ -164,9 +164,9 @@ class WrappedError(XomifyError):
         )
 
 class ReleaseRadarEmailError(XomifyError):
-    """Raised when wrapped processing fails."""
-    
-    def __init__(self, message: str, handler: str = "wrapped", function: str = "unknown"):
+    """Raised when release radar email processing fails."""
+
+    def __init__(self, message: str, handler: str = "release_radar_email", function: str = "unknown"):
         super().__init__(
             message=message,
             handler=handler,

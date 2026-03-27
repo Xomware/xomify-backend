@@ -20,7 +20,7 @@ def handler(event, context):
     # Remove sensitive data
     clean_users = []
     for user in users:
-        del user['refreshToken']
+        user.pop('refreshToken', None)
         clean_users.append(user)
 
     log.info(f"Retrieved {len(clean_users)} users from user table")

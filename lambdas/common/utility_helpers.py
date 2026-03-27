@@ -7,7 +7,7 @@ Common utilities for Lambda handlers.
 import json
 import decimal
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Set
 
 from lambdas.common.logger import get_logger
@@ -225,12 +225,12 @@ def require_fields(data: dict, *fields: str) -> None:
 
 def get_timestamp() -> str:
     """Get current UTC timestamp in standard format."""
-    return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 
 def get_iso_timestamp() -> str:
     """Get current UTC timestamp in ISO format."""
-    return datetime.utcnow().isoformat() + 'Z'
+    return datetime.now(timezone.utc).isoformat() + 'Z'
 
 
 def format_date(raw_date: str) -> datetime:
@@ -284,10 +284,7 @@ def build_error_handler_response(error, is_api=True):
 def set_response(statusCode, body):
     return success_response(body, status_code=statusCode or 500)
 
-def validate_input_legacy(input, required_fields={}, optional_fields={}):
+def validate_input_legacy(input_data, required_fields={}, optional_fields={}):
     """Legacy validate_input for backward compatibility."""
-    is_valid, _ = validate_input(input, set(required_fields), set(optional_fields))
+    is_valid, _ = validate_input(input_data, set(required_fields), set(optional_fields))
     return is_valid
-
-# Point old name to new function
-validate_input = validate_input_legacy
