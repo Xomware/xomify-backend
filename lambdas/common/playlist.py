@@ -1,7 +1,6 @@
 import requests
 import aiohttp
 import asyncio
-import time
 from lambdas.common.logger import get_logger
 from lambdas.common.aiohttp_helper import fetch_json, post_json, delete_json, put_data
 
@@ -38,9 +37,9 @@ class Playlist:
             self.uri_list = uri_list
             self.image = image
             await self.create_playlist()
-            time.sleep(2)
+            await asyncio.sleep(2)
             await self.add_playlist_image()
-            time.sleep(2)
+            await asyncio.sleep(2)
             await self.add_playlist_songs()
             log.info(f"Playlist '{self.name}' Complete!")
         except Exception as err:
@@ -67,7 +66,7 @@ class Playlist:
             log.info(f"Updating playlist: {self.name}")
             self.uri_list = uri_list
             await self.delete_playlist_songs()
-            time.sleep(1)
+            await asyncio.sleep(1)
             await self.add_playlist_songs()
             log.info(f"Playlist '{self.name}' Complete!")
         except Exception as err:
@@ -185,7 +184,7 @@ class Playlist:
             if response.status_code != 202:
                 if not retried:
                     log.warning("First attempt failed. Retrying...")
-                    time.sleep(2)
+                    await asyncio.sleep(2)
                     await self.add_playlist_image(True)
                 else:
                     raise Exception(f"Failed to upload image: {response.status_code} {response.text}")

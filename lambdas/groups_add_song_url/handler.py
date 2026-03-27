@@ -68,9 +68,10 @@ async def fetch_track_details(email: str, track_id: str, group_id: str) -> dict:
         url = f"https://api.spotify.com/v1/tracks/{track_id}"
 
         async with session.get(url, headers=headers) as response:
+            status = response.status
             track = await response.json()
 
-        if response.status != 200:
+        if status != 200:
             raise ValidationError("Track not found", field="spotifyUrl")
 
         # Extract track details

@@ -4,14 +4,13 @@ XOMIFY Weekly Release Radar Cron Job
 Processes release radar for all enrolled users.
 
 Schedule: Runs every Saturday morning (~2 AM Eastern)
-Week Definition: Saturday 00:00:00 to Thursday 23:59:59
-(Friday excluded to avoid back-dated "New Music Friday" releases)
+Week Definition: Saturday 00:00:00 to Friday 23:59:59 (full 7-day window)
 
 Flow:
-1. Get the PREVIOUS week (last Saturday through last Thursday)
+1. Get the PREVIOUS week (last Saturday through last Friday)
 2. For each enrolled user:
    a. Get all followed artists
-   b. Fetch releases from that week (Sat-Thu, Friday excluded)
+   b. Fetch releases from that week (Saturday-Friday)
    c. Save to DynamoDB history (flat list + artist-grouped structure)
    d. Create/update Spotify playlist
 3. Email sender runs 15 min later
@@ -41,68 +40,68 @@ log = get_logger(__file__)
 async def release_radar_cron_job(event) -> tuple[list, list]:
     """
     Main entry point for the weekly release radar cron job.
-    
+
     Processes the PREVIOUS week (Saturday-Friday that just ended).
-    
+
     Returns:
         Tuple of (successful_emails, failed_users)
     """
     log.info("=" * 60)
-    log.info("📻 RELEASE RADAR CRON JOB STARTING")
+    log.info("RELEASE RADAR CRON JOB STARTING")
     log.info("=" * 60)
-    
+
     # Get PREVIOUS week key (the week that ended yesterday Friday)
     week_key = get_previous_week_key()
     start_date, end_date = get_week_date_range(week_key)
-    
+
     log.info(f"Processing week: {week_key}")
-    log.info(f"Date range: {start_date.strftime('%Y-%m-%d')} (Sat) to {end_date.strftime('%Y-%m-%d')} (Thu)")
+    log.info(f"Date range: {start_date.strftime('%Y-%m-%d')} (Sat) to {end_date.strftime('%Y-%m-%d')} (Fri)")
     log.info(f"Display: {format_week_display(week_key)}")
-    
+
     # Get active users
     users = get_active_release_radar_users()
     log.info(f"Found {len(users)} enrolled users")
-    
+
     if not users:
         log.info("No active users to process")
         return [], []
-    
+
     # Process users with connection pooling
     connector = aiohttp.TCPConnector(limit=10)
     timeout = aiohttp.ClientTimeout(total=600)  # 10 min timeout
-    
+
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         tasks = [
-            process_user(user, session, week_key, start_date, end_date) 
+            process_user(user, session, week_key, start_date, end_date)
             for user in users
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Collect results
     successes = []
     failures = []
-    
+
     for user, result in zip(users, results):
         email = user.get('email', 'unknown')
         if isinstance(result, Exception):
-            log.error(f"❌ {email}: {result}")
+            log.error(f"{email}: {result}")
             failures.append({"email": email, "error": str(result)})
         else:
             release_count = result.get('releaseCount', 0)
-            log.info(f"✅ {email}: {release_count} releases")
+            log.info(f"{email}: {release_count} releases")
             successes.append(email)
-    
+
     log.info("=" * 60)
-    log.info(f"📻 RELEASE RADAR CRON JOB COMPLETE")
-    log.info(f"   ✅ Success: {len(successes)}")
-    log.info(f"   ❌ Failed: {len(failures)}")
+    log.info("RELEASE RADAR CRON JOB COMPLETE")
+    log.info(f"   Success: {len(successes)}")
+    log.info(f"   Failed: {len(failures)}")
     log.info("=" * 60)
-    
+
     return successes, failures
 
 
 async def process_user(
-    user: dict, 
+    user: dict,
     session: aiohttp.ClientSession,
     week_key: str,
     start_date: datetime,
@@ -110,31 +109,31 @@ async def process_user(
 ) -> dict:
     """
     Process a single user's release radar for the week.
-    
+
     1. Get followed artists
     2. Fetch all releases from the week
     3. Save to history
     4. Create/update playlist
     """
     email = user.get('email', 'unknown')
-    
+
     try:
         log.info(f"[{email}] Processing...")
-        
+
         # Initialize Spotify client
         spotify = Spotify(user, session)
         await spotify.aiohttp_initialize_release_radar()
-        
+
         # Get followed artists
         log.info(f"[{email}] Fetching followed artists...")
         await spotify.followed_artists.aiohttp_get_followed_artists()
         artist_ids = spotify.followed_artists.artist_id_list
         log.info(f"[{email}] Found {len(artist_ids)} followed artists")
-        
+
         if not artist_ids:
             log.info(f"[{email}] No followed artists, skipping")
             return {"email": email, "releaseCount": 0, "skipped": True}
-        
+
         # Fetch releases for this specific week
         log.info(f"[{email}] Fetching releases for {week_key}...")
         releases = await fetch_releases_for_week(
@@ -144,7 +143,7 @@ async def process_user(
             end_date
         )
         log.info(f"[{email}] Found {len(releases)} releases")
-        
+
         # Get track URIs for playlist
         track_uris = []
         for release in releases:
@@ -156,14 +155,14 @@ async def process_user(
                     track_uris.extend(album_tracks)
                 else:
                     track_uris.append(uri)
-        
+
         # Remove duplicates
         track_uris = list(set(track_uris))
         log.info(f"[{email}] Total tracks for playlist: {len(track_uris)}")
-        
+
         # Create or update playlist
         playlist_id = spotify.release_radar_playlist.id
-        
+
         if track_uris:
             if not playlist_id:
                 log.info(f"[{email}] Creating new playlist...")
@@ -179,17 +178,17 @@ async def process_user(
                 await spotify.release_radar_playlist.aiohttp_update_playlist(track_uris)
         else:
             log.info(f"[{email}] No tracks to add to playlist")
-        
+
         # Save to history
-        saved = save_release_radar_week(
+        save_release_radar_week(
             email=email,
             week_key=week_key,
             releases=releases,
             playlist_id=playlist_id
         )
-        
-        log.info(f"[{email}] ✅ Complete!")
-        
+
+        log.info(f"[{email}] Complete!")
+
         return {
             "email": email,
             "releaseCount": len(releases),
@@ -197,9 +196,9 @@ async def process_user(
             "playlistId": playlist_id,
             "weekKey": week_key
         }
-        
+
     except Exception as err:
-        log.error(f"[{email}] ❌ Failed: {err}")
+        log.error(f"[{email}] Failed: {err}")
         raise ReleaseRadarError(
             message=f"Process user {email} failed: {err}",
             function="process_user"
@@ -215,118 +214,146 @@ async def fetch_releases_for_week(
     """
     Fetch all releases from followed artists within the week.
 
-    The date window is Saturday 00:00 → Thursday 23:59 (Friday excluded).
-    Results are returned as a flat list ordered by releaseDate descending
-    (newest first). Grouping by artist is performed later in
-    ``save_release_radar_week``.
+    The date window is Saturday 00:00 to Friday 23:59 (full 7-day window).
+    Uses a single API call per artist with combined include_groups to minimize
+    Spotify API calls.  Runs concurrent requests within each batch, controlled
+    by a semaphore.
 
     Args:
         spotify: Spotify client
         artist_ids: List of artist IDs to check
         start_date: Saturday start of week (00:00:00)
-        end_date: Thursday end of week (23:59:59) — Friday excluded
+        end_date: Friday end of week (23:59:59)
 
     Returns:
         List of normalized release objects, sorted by releaseDate descending
     """
     releases = []
     seen_ids = set()
-    
-    # Process in batches
+    skipped_artists = 0
+
+    # Semaphore limits concurrent requests within a batch
+    semaphore = asyncio.Semaphore(8)
+
+    async def fetch_artist(artist_id: str) -> list:
+        """Fetch releases for a single artist (one combined API call)."""
+        nonlocal skipped_artists
+        async with semaphore:
+            try:
+                # Combined include_groups in one call (#123 optimization)
+                url = (
+                    f"https://api.spotify.com/v1/artists/{artist_id}/albums"
+                    f"?include_groups=album,single,appears_on&limit=20"
+                )
+
+                data = await fetch_json(
+                    spotify.aiohttp_session,
+                    url,
+                    headers=spotify.headers
+                )
+
+                artist_releases = []
+                for album in data.get('items', []):
+                    album_id = album.get('id')
+                    if not album_id or album_id in seen_ids:
+                        continue
+
+                    # Check if release is in our week
+                    release_date_str = album.get('release_date', '')
+                    if not is_in_week(release_date_str, start_date, end_date):
+                        continue
+
+                    seen_ids.add(album_id)
+
+                    # Normalize for storage
+                    artist_releases.append({
+                        'albumId': album_id,
+                        'albumName': album.get('name'),
+                        'albumType': album.get('album_type'),
+                        'artistId': album.get('artists', [{}])[0].get('id'),
+                        'artistName': album.get('artists', [{}])[0].get('name', 'Unknown'),
+                        'releaseDate': release_date_str,
+                        'totalTracks': album.get('total_tracks', 1),
+                        'imageUrl': album.get('images', [{}])[0].get('url') if album.get('images') else None,
+                        'spotifyUrl': album.get('external_urls', {}).get('spotify'),
+                        'uri': album.get('uri')
+                    })
+
+                    log.debug(f"Found: {album.get('name')} by {album.get('artists', [{}])[0].get('name')} ({release_date_str})")
+
+                return artist_releases
+
+            except Exception as err:
+                skipped_artists += 1
+                log.warning(f"Failed to fetch releases for artist {artist_id}: {err}")
+                return []
+
+    # Process in batches with concurrent requests within each batch
     batch_size = 20
     total = len(artist_ids)
-    
+
     for i in range(0, total, batch_size):
-        batch = artist_ids[i:i+batch_size]
-        
-        for artist_id in batch:
-            try:
-                # Get albums, singles, and appears_on
-                for include_group in ['album', 'single', 'appears_on']:
-                    url = f"https://api.spotify.com/v1/artists/{artist_id}/albums"
-                    url += f"?include_groups={include_group}&limit=10"
-                    
-                    data = await fetch_json(
-                        spotify.aiohttp_session,
-                        url,
-                        headers=spotify.headers
-                    )
-                    
-                    for album in data.get('items', []):
-                        album_id = album.get('id')
-                        if not album_id or album_id in seen_ids:
-                            continue
-                        
-                        # Check if release is in our week
-                        release_date_str = album.get('release_date', '')
-                        if not is_in_week(release_date_str, start_date, end_date):
-                            continue
-                        
-                        seen_ids.add(album_id)
-                        
-                        # Normalize for storage
-                        releases.append({
-                            'albumId': album_id,
-                            'albumName': album.get('name'),
-                            'albumType': album.get('album_type'),
-                            'artistId': album.get('artists', [{}])[0].get('id'),
-                            'artistName': album.get('artists', [{}])[0].get('name', 'Unknown'),
-                            'releaseDate': release_date_str,
-                            'totalTracks': album.get('total_tracks', 1),
-                            'imageUrl': album.get('images', [{}])[0].get('url') if album.get('images') else None,
-                            'spotifyUrl': album.get('external_urls', {}).get('spotify'),
-                            'uri': album.get('uri')
-                        })
-                        
-                        log.debug(f"Found: {album.get('name')} by {album.get('artists', [{}])[0].get('name')} ({release_date_str})")
-                        
-            except Exception as err:
-                log.debug(f"Failed to fetch releases for artist {artist_id}: {err}")
-                continue
-        
-        # Small delay between batches
+        batch = artist_ids[i:i + batch_size]
+
+        # Run all artists in this batch concurrently (bounded by semaphore)
+        batch_results = await asyncio.gather(
+            *[fetch_artist(aid) for aid in batch]
+        )
+
+        for artist_releases in batch_results:
+            releases.extend(artist_releases)
+
+        # Small delay between batches to avoid rate limits
         if i + batch_size < total:
             await asyncio.sleep(0.3)
-    
+
+    # Log summary
+    checked = total
+    log.info(f"Checked {checked} artists, skipped {skipped_artists} due to errors")
+
     # Sort by release date (newest first)
     releases.sort(key=lambda x: x.get('releaseDate', ''), reverse=True)
-    
+
     return releases
 
 
 def is_in_week(release_date_str: str, start_date: datetime, end_date: datetime) -> bool:
     """
-    Check if a release date falls within the week.
-    
+    Check if a release date falls within the week (Saturday-Friday).
+
     Args:
         release_date_str: Date string (YYYY-MM-DD, YYYY-MM, or YYYY)
         start_date: Saturday start
         end_date: Friday end
-        
+
     Returns:
         True if release is in the week
     """
     if not release_date_str or len(release_date_str) < 4:
         return False
-    
+
     try:
-        # Parse based on format
+        start = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
         if len(release_date_str) == 4:
             # Year only - can't determine week
             return False
         elif len(release_date_str) == 7:
-            # Year-month - treat as first of month
-            release_date = datetime.strptime(release_date_str, '%Y-%m')
+            # Year-month only -- check if the month overlaps with the week window
+            release_year = int(release_date_str[:4])
+            release_month = int(release_date_str[5:7])
+            # The month overlaps our window if start or end falls in that month,
+            # or the entire month contains the window
+            return (
+                (start.year == release_year and start.month == release_month) or
+                (end.year == release_year and end.month == release_month)
+            )
         else:
             # Full date
             release_date = datetime.strptime(release_date_str[:10], '%Y-%m-%d')
-        
-        # Compare dates
-        start = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        return start <= release_date <= end
-        
+            return start <= release_date <= end
+
     except Exception:
         return False
 
@@ -336,36 +363,15 @@ async def get_album_track_uris(spotify, album_uri: str) -> list:
     try:
         album_id = album_uri.split(':')[2]
         url = f"https://api.spotify.com/v1/albums/{album_id}/tracks?limit=50"
-        
+
         data = await fetch_json(
             spotify.aiohttp_session,
             url,
             headers=spotify.headers
         )
-        
+
         return [track.get('uri') for track in data.get('items', []) if track.get('uri')]
-        
+
     except Exception as err:
-        log.debug(f"Failed to get album tracks for {album_uri}: {err}")
+        log.warning(f"Failed to get album tracks for {album_uri}: {err}")
         return []
-
-
-# Lambda handler
-def handler(event, context):
-    """AWS Lambda entry point."""
-    try:
-        successes, failures = asyncio.run(release_radar_cron_job(event))
-        
-        return {
-            'statusCode': 200,
-            'body': {
-                'successfulUsers': successes,
-                'failedUsers': failures
-            }
-        }
-    except Exception as err:
-        log.error(f"Lambda handler error: {err}")
-        return {
-            'statusCode': 500,
-            'body': {'error': str(err)}
-        }
