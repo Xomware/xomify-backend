@@ -25,6 +25,9 @@ GROUPS_TABLE_NAME = os.environ.get('GROUPS_TABLE_NAME', '')
 GROUP_MEMBERS_TABLE_NAME = os.environ.get('GROUP_MEMBERS_TABLE_NAME', '')
 GROUP_TRACKS_TABLE_NAME = os.environ.get('GROUP_TRACKS_TABLE_NAME', '')
 TRACK_RATINGS_TABLE_NAME = os.environ.get('TRACK_RATINGS_TABLE_NAME', '')
+SHARES_TABLE_NAME = os.environ.get('SHARES_TABLE_NAME', '')
+SHARE_INTERACTIONS_TABLE_NAME = os.environ.get('SHARE_INTERACTIONS_TABLE_NAME', '')
+INVITES_TABLE_NAME = os.environ.get('INVITES_TABLE_NAME', '')
 
 # Email Service
 FROM_EMAIL = os.environ.get('FROM_EMAIL', 'noreply@xomify.xomware.com')
