@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import DynamoDBError
@@ -223,3 +224,48 @@ def query_feed_for_emails(
 
     all_items.sort(key=lambda s: s.get("createdAt", ""), reverse=True)
     return all_items[:limit]
+
+
+# ============================================
+# Threshold Notification Latch (idempotent)
+# ============================================
+def mark_threshold_notified(share_id: str, threshold: int) -> bool:
+    """
+    Atomically mark a share as having fired its queue-threshold notification.
+
+    Uses a DynamoDB conditional UpdateItem on the share row
+    (attribute_not_exists(notifiedAtThreshold<N>)) so only one caller wins
+    under concurrent writes. Returns True if this call acquired the latch
+    and the push should be sent, False if the latch was already taken.
+    """
+    attr = f"notifiedAtThreshold{threshold}"
+    try:
+        table = dynamodb.Table(SHARES_TABLE_NAME)
+        table.update_item(
+            Key={"shareId": share_id},
+            UpdateExpression=f"SET #a = :now",
+            ExpressionAttributeNames={"#a": attr},
+            ExpressionAttributeValues={":now": _iso_now()},
+            ConditionExpression=f"attribute_not_exists(#a)",
+        )
+        log.info(f"Threshold latch acquired for share={share_id} threshold={threshold}")
+        return True
+    except ClientError as err:
+        if err.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            log.info(
+                f"Threshold latch already set for share={share_id} threshold={threshold}"
+            )
+            return False
+        log.error(f"mark_threshold_notified failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="mark_threshold_notified",
+            table=SHARES_TABLE_NAME,
+        )
+    except Exception as err:
+        log.error(f"mark_threshold_notified failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="mark_threshold_notified",
+            table=SHARES_TABLE_NAME,
+        )

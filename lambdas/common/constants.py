@@ -28,6 +28,17 @@ TRACK_RATINGS_TABLE_NAME = os.environ.get('TRACK_RATINGS_TABLE_NAME', '')
 SHARES_TABLE_NAME = os.environ.get('SHARES_TABLE_NAME', '')
 SHARE_INTERACTIONS_TABLE_NAME = os.environ.get('SHARE_INTERACTIONS_TABLE_NAME', '')
 INVITES_TABLE_NAME = os.environ.get('INVITES_TABLE_NAME', '')
+DEVICE_TOKENS_TABLE_NAME = os.environ.get('DEVICE_TOKENS_TABLE_NAME', '')
+
+# Cross-lambda invocation (backend-interactions-and-notifications sub-feature)
+NOTIFICATIONS_SEND_FUNCTION_NAME = os.environ.get('NOTIFICATIONS_SEND_FUNCTION_NAME', '')
+
+# APNs SSM parameter paths (populated by infra PR-A)
+APNS_AUTH_KEY_PARAM = os.environ.get('APNS_AUTH_KEY_PARAM', '/xomify/apns/AUTH_KEY')
+APNS_KEY_ID_PARAM = os.environ.get('APNS_KEY_ID_PARAM', '/xomify/apns/KEY_ID')
+APNS_TEAM_ID_PARAM = os.environ.get('APNS_TEAM_ID_PARAM', '/xomify/apns/TEAM_ID')
+APNS_BUNDLE_ID_PARAM = os.environ.get('APNS_BUNDLE_ID_PARAM', '/xomify/apns/BUNDLE_ID')
+APNS_USE_SANDBOX = os.environ.get('APNS_USE_SANDBOX', 'false').lower() == 'true'
 
 # Shares GSI + invite URL template (backend-shares sub-feature)
 SHARES_EMAIL_INDEX = os.environ.get('SHARES_EMAIL_INDEX', 'email-createdAt-index')

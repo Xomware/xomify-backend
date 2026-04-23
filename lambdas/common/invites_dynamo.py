@@ -210,3 +210,52 @@ def list_invites_by_sender(
 def count_outstanding_invites_for_sender(sender_email: str) -> int:
     """Rate-limit helper — count of non-consumed, non-expired invites for a sender."""
     return len(list_invites_by_sender(sender_email, active_only=True))
+
+
+# ============================================
+# Decline Invite (atomic no-friend consume)
+# ============================================
+def decline_invite(invite_code: str, decliner_email: str) -> dict[str, Any]:
+    """
+    Atomic update — mark an invite as declined so it can no longer be
+    accepted. Uses the same consumedAt latch as consume_invite so the same
+    concurrency guarantee applies; distinguished by declinedBy attribute.
+
+    Raises ClientError (ConditionalCheckFailedException) if the invite was
+    already consumed or is past expiry — caller maps to 410.
+    """
+    try:
+        table = dynamodb.Table(INVITES_TABLE_NAME)
+        now_iso = _iso_now()
+
+        response = table.update_item(
+            Key={"inviteCode": invite_code},
+            UpdateExpression=(
+                "SET consumedAt = :now, declinedAt = :now, declinedBy = :email"
+            ),
+            ConditionExpression="attribute_not_exists(consumedAt) AND expiresAt > :now",
+            ExpressionAttributeValues={
+                ":now": now_iso,
+                ":email": decliner_email,
+            },
+            ReturnValues="ALL_NEW",
+        )
+        log.info(f"Invite {invite_code} declined by {decliner_email}")
+        return response.get("Attributes", {})
+
+    except ClientError as err:
+        if err.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            raise
+        log.error(f"Decline Invite failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="decline_invite",
+            table=INVITES_TABLE_NAME,
+        )
+    except Exception as err:
+        log.error(f"Decline Invite failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="decline_invite",
+            table=INVITES_TABLE_NAME,
+        )
