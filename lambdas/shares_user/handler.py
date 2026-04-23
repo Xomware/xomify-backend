@@ -10,6 +10,7 @@ from lambdas.common.utility_helpers import (
     require_fields,
 )
 from lambdas.common.shares_dynamo import list_shares_for_user
+from lambdas.common.interactions_dynamo import build_enrichment
 
 log = get_logger(__file__)
 
@@ -66,5 +67,20 @@ def handler(event, context):
 
     shares, next_before = list_shares_for_user(target_email, limit=limit, before=before)
 
-    log.info(f"Returning {len(shares)} shares for target {target_email}")
-    return success_response({'shares': shares, 'nextBefore': next_before})
+    enriched = []
+    for share in shares:
+        share_id = share.get('shareId')
+        if share_id:
+            try:
+                share.update(build_enrichment(share_id, email))
+            except Exception as err:
+                log.warning(f"Profile enrichment failed for share {share_id}: {err}")
+                share.setdefault('queuedCount', 0)
+                share.setdefault('ratedCount', 0)
+                share.setdefault('viewerHasQueued', False)
+                share.setdefault('viewerRating', None)
+                share.setdefault('sharerRating', None)
+        enriched.append(share)
+
+    log.info(f"Returning {len(enriched)} shares for target {target_email}")
+    return success_response({'shares': enriched, 'nextBefore': next_before})

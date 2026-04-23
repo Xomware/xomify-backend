@@ -199,13 +199,50 @@ class WrappedEmailError(XomifyError):
 
 class UserTableError(XomifyError):
     """Raised when user table operations fail."""
-    
+
     def __init__(self, message: str, handler: str = "user", function: str = "unknown"):
         super().__init__(
             message=message,
             handler=handler,
             function=function,
             status=500
+        )
+
+
+class ApnsError(XomifyError):
+    """Raised when APNs HTTP/2 delivery or JWT signing fails."""
+
+    def __init__(
+        self,
+        message: str,
+        handler: str = "apns_client",
+        function: str = "unknown",
+        status_code: int | None = None,
+        reason: str | None = None,
+    ):
+        details: dict = {}
+        if status_code is not None:
+            details["apnsStatusCode"] = status_code
+        if reason is not None:
+            details["apnsReason"] = reason
+        super().__init__(
+            message=message,
+            handler=handler,
+            function=function,
+            status=502,
+            details=details,
+        )
+
+
+class NotificationsError(XomifyError):
+    """Raised when notification dispatch fails."""
+
+    def __init__(self, message: str, handler: str = "notifications", function: str = "unknown"):
+        super().__init__(
+            message=message,
+            handler=handler,
+            function=function,
+            status=500,
         )
 
 

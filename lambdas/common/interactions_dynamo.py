@@ -1,19 +1,30 @@
 """
 XOMIFY Share Interactions DynamoDB Helpers
 ==========================================
-Database operations for Share Interactions table.
+Database operations for the xomify-share-interactions table.
 
 Table Structure:
 - PK: shareId (string)
 - SK: email (string)
 
 Attributes:
-- action: "like" | "love" | "fire" | etc
-- createdAt: timestamp
+- shareId / email (keys)
+- sharedBy: string (denormalized author email — lets digest / threshold logic
+  answer "who should be notified" without a second read)
+- queued: bool (viewer has queued this share's track)
+- rated: bool (viewer has rated this share's track)
+- rating: number (1.0-5.0, only present when rated=True)
+- queuedAt / ratedAt / createdAt / updatedAt: ISO8601 UTC timestamps
+- action: str (legacy single-action field, retained for backward-compat with
+  the prior shape but no longer primary)
 """
 
-from datetime import datetime, timezone
+from __future__ import annotations
+
 from collections import Counter
+from datetime import datetime, timezone
+from typing import Any, Optional
+
 import boto3
 from boto3.dynamodb.conditions import Key
 
@@ -25,102 +36,298 @@ log = get_logger(__file__)
 
 dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
 
+VALID_ACTIONS = {"queued", "rated", "unqueued", "unrated"}
 
-def _get_timestamp() -> str:
-    """Get current UTC timestamp."""
-    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ============================================
-# Upsert Interaction
+# Set Reaction (action in {queued, rated})
 # ============================================
-def upsert_interaction(share_id: str, email: str, action: str):
+def set_reaction(
+    share_id: str,
+    email: str,
+    shared_by: str,
+    action: str,
+    rating: Optional[float] = None,
+) -> dict[str, Any]:
+    """
+    Idempotent UpdateItem flipping the queued/rated attribute for the given viewer.
+
+    Returns the updated item attributes.
+    """
+    if action not in {"queued", "rated"}:
+        raise ValueError(f"set_reaction requires action in (queued, rated); got {action!r}")
+
     try:
         table = dynamodb.Table(SHARE_INTERACTIONS_TABLE_NAME)
+        now_iso = _iso_now()
+        attr_name = "queued" if action == "queued" else "rated"
+        ts_attr = "queuedAt" if action == "queued" else "ratedAt"
 
-        item = {
-            "shareId": share_id,
-            "email": email,
-            "action": action,
-            "createdAt": _get_timestamp()
+        update_parts = [
+            f"#{attr_name} = :true_",
+            "#sharedBy = :sharedBy",
+            "#updatedAt = :now",
+            f"#{ts_attr} = :now",
+            "#createdAt = if_not_exists(#createdAt, :now)",
+            "#action = :action",
+        ]
+        expr_attr_names: dict[str, str] = {
+            f"#{attr_name}": attr_name,
+            "#sharedBy": "sharedBy",
+            "#updatedAt": "updatedAt",
+            f"#{ts_attr}": ts_attr,
+            "#createdAt": "createdAt",
+            "#action": "action",
+        }
+        expr_attr_values: dict[str, Any] = {
+            ":true_": True,
+            ":sharedBy": shared_by,
+            ":now": now_iso,
+            ":action": action,
         }
 
-        table.put_item(Item=item)
-        log.info(f"Interaction upserted: share={share_id}, user={email}, action={action}")
-        return True
+        if action == "rated":
+            if rating is None:
+                raise ValueError("rating required when action=rated")
+            update_parts.append("#rating = :rating")
+            expr_attr_names["#rating"] = "rating"
+            expr_attr_values[":rating"] = rating
 
+        response = table.update_item(
+            Key={"shareId": share_id, "email": email},
+            UpdateExpression="SET " + ", ".join(update_parts),
+            ExpressionAttributeNames=expr_attr_names,
+            ExpressionAttributeValues=expr_attr_values,
+            ReturnValues="ALL_NEW",
+        )
+        log.info(
+            f"Reaction set: share={share_id}, user={email}, action={action}"
+        )
+        return response.get("Attributes", {})
+
+    except ValueError:
+        raise
     except Exception as err:
-        log.error(f"Upsert Interaction failed: {err}")
+        log.error(f"Set Reaction failed: {err}")
         raise DynamoDBError(
             message=str(err),
-            function="upsert_interaction",
-            table=SHARE_INTERACTIONS_TABLE_NAME
+            function="set_reaction",
+            table=SHARE_INTERACTIONS_TABLE_NAME,
         )
 
 
 # ============================================
-# Delete Interaction (toggle off)
+# Clear Reaction (action in {unqueued, unrated})
 # ============================================
-def delete_interaction(share_id: str, email: str):
+def clear_reaction(share_id: str, email: str, action: str) -> dict[str, Any]:
+    """Flip a reaction attribute off; leaves the row in place so the opposite
+    attribute survives (e.g. unqueue keeps rating intact)."""
+    if action not in {"unqueued", "unrated"}:
+        raise ValueError(
+            f"clear_reaction requires action in (unqueued, unrated); got {action!r}"
+        )
+
     try:
         table = dynamodb.Table(SHARE_INTERACTIONS_TABLE_NAME)
+        now_iso = _iso_now()
+        target = "queued" if action == "unqueued" else "rated"
 
-        table.delete_item(
-            Key={
-                "shareId": share_id,
-                "email": email
-            }
+        update_parts = [
+            f"#{target} = :false_",
+            "#updatedAt = :now",
+            "#action = :action",
+        ]
+        expr_attr_names = {
+            f"#{target}": target,
+            "#updatedAt": "updatedAt",
+            "#action": "action",
+        }
+        expr_attr_values: dict[str, Any] = {
+            ":false_": False,
+            ":now": now_iso,
+            ":action": action,
+        }
+        remove_parts: list[str] = []
+        if target == "rated":
+            remove_parts.append("#rating")
+            expr_attr_names["#rating"] = "rating"
+
+        update_expr = "SET " + ", ".join(update_parts)
+        if remove_parts:
+            update_expr += " REMOVE " + ", ".join(remove_parts)
+
+        response = table.update_item(
+            Key={"shareId": share_id, "email": email},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames=expr_attr_names,
+            ExpressionAttributeValues=expr_attr_values,
+            ReturnValues="ALL_NEW",
         )
-        log.info(f"Interaction deleted: share={share_id}, user={email}")
-        return True
+        log.info(
+            f"Reaction cleared: share={share_id}, user={email}, action={action}"
+        )
+        return response.get("Attributes", {})
 
+    except ValueError:
+        raise
     except Exception as err:
-        log.error(f"Delete Interaction failed: {err}")
+        log.error(f"Clear Reaction failed: {err}")
         raise DynamoDBError(
             message=str(err),
-            function="delete_interaction",
-            table=SHARE_INTERACTIONS_TABLE_NAME
+            function="clear_reaction",
+            table=SHARE_INTERACTIONS_TABLE_NAME,
         )
 
 
 # ============================================
-# List Interactions For Share
+# Get Reaction
 # ============================================
-def list_interactions_for_share(share_id: str):
+def get_reaction(share_id: str, email: str) -> Optional[dict[str, Any]]:
+    try:
+        table = dynamodb.Table(SHARE_INTERACTIONS_TABLE_NAME)
+        response = table.get_item(Key={"shareId": share_id, "email": email})
+        return response.get("Item")
+    except Exception as err:
+        log.error(f"Get Reaction failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="get_reaction",
+            table=SHARE_INTERACTIONS_TABLE_NAME,
+        )
+
+
+# ============================================
+# List Reactions For Share
+# ============================================
+def list_reactions_for_share(share_id: str) -> list[dict[str, Any]]:
     try:
         table = dynamodb.Table(SHARE_INTERACTIONS_TABLE_NAME)
         response = table.query(
             KeyConditionExpression=Key("shareId").eq(share_id)
         )
-
-        return response["Items"]
-
+        return response.get("Items", [])
     except Exception as err:
-        log.error(f"List Interactions For Share failed: {err}")
+        log.error(f"List Reactions For Share failed: {err}")
         raise DynamoDBError(
             message=str(err),
-            function="list_interactions_for_share",
-            table=SHARE_INTERACTIONS_TABLE_NAME
+            function="list_reactions_for_share",
+            table=SHARE_INTERACTIONS_TABLE_NAME,
         )
 
 
+# Back-compat alias — earlier handler code called this name.
+def list_interactions_for_share(share_id: str) -> list[dict[str, Any]]:
+    return list_reactions_for_share(share_id)
+
+
 # ============================================
-# Count Interactions For Share (by action)
+# Count Distinct Reactors
+# ============================================
+def count_distinct_reactors(share_id: str) -> int:
+    """
+    Count rows where the viewer has an active reaction
+    (queued=True OR rated=True). One row per viewer, so this is the
+    distinct-reactor count by construction.
+    """
+    items = list_reactions_for_share(share_id)
+    return sum(1 for item in items if item.get("queued") or item.get("rated"))
+
+
+# ============================================
+# Back-compat counters (legacy action histogram)
 # ============================================
 def count_interactions_for_share(share_id: str) -> dict:
-    """
-    Returns a dict keyed by action with counts.
-    Example: {"like": 3, "fire": 1}
-    """
-    try:
-        items = list_interactions_for_share(share_id)
-        counts = Counter(item.get("action") for item in items if item.get("action"))
-        return dict(counts)
+    """Legacy count-by-action histogram. Retained for old callers."""
+    items = list_reactions_for_share(share_id)
+    counts = Counter(item.get("action") for item in items if item.get("action"))
+    return dict(counts)
 
+
+# ============================================
+# Enrichment helper (used by shares_feed / shares_user)
+# ============================================
+def build_enrichment(share_id: str, viewer_email: str) -> dict[str, Any]:
+    """
+    Inspect all reaction rows for a share and collapse them into the four
+    counts/flags the iOS feed card needs.
+    """
+    items = list_reactions_for_share(share_id)
+    queued_count = 0
+    rated_count = 0
+    viewer_has_queued = False
+    viewer_rating: Optional[float] = None
+    sharer_rating: Optional[float] = None
+
+    for item in items:
+        email = item.get("email")
+        shared_by = item.get("sharedBy")
+        if item.get("queued"):
+            queued_count += 1
+        if item.get("rated"):
+            rated_count += 1
+        if email == viewer_email:
+            viewer_has_queued = bool(item.get("queued"))
+            rating = item.get("rating")
+            if rating is not None:
+                try:
+                    viewer_rating = float(rating)
+                except (TypeError, ValueError):
+                    viewer_rating = None
+        if shared_by and email == shared_by:
+            rating = item.get("rating")
+            if rating is not None:
+                try:
+                    sharer_rating = float(rating)
+                except (TypeError, ValueError):
+                    sharer_rating = None
+
+    return {
+        "queuedCount": queued_count,
+        "ratedCount": rated_count,
+        "viewerHasQueued": viewer_has_queued,
+        "viewerRating": viewer_rating,
+        "sharerRating": sharer_rating,
+    }
+
+
+# ============================================
+# Legacy single-action helpers (kept for callers still on the old shape)
+# ============================================
+def upsert_interaction(share_id: str, email: str, action: str) -> bool:
+    """Legacy helper — writes a single action row without the queued/rated
+    attribute split. New callers should use set_reaction / clear_reaction."""
+    try:
+        table = dynamodb.Table(SHARE_INTERACTIONS_TABLE_NAME)
+        item = {
+            "shareId": share_id,
+            "email": email,
+            "action": action,
+            "createdAt": _iso_now(),
+        }
+        table.put_item(Item=item)
+        return True
     except Exception as err:
-        log.error(f"Count Interactions For Share failed: {err}")
+        log.error(f"Legacy upsert_interaction failed: {err}")
         raise DynamoDBError(
             message=str(err),
-            function="count_interactions_for_share",
-            table=SHARE_INTERACTIONS_TABLE_NAME
+            function="upsert_interaction",
+            table=SHARE_INTERACTIONS_TABLE_NAME,
+        )
+
+
+def delete_interaction(share_id: str, email: str) -> bool:
+    try:
+        table = dynamodb.Table(SHARE_INTERACTIONS_TABLE_NAME)
+        table.delete_item(Key={"shareId": share_id, "email": email})
+        return True
+    except Exception as err:
+        log.error(f"Legacy delete_interaction failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="delete_interaction",
+            table=SHARE_INTERACTIONS_TABLE_NAME,
         )
