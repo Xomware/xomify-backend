@@ -192,3 +192,66 @@ def delete_friends(email: str, request_email: str):
             function="reject_friend_request",
             table=FRIENDSHIPS_TABLE_NAME
         )
+
+
+# ============================================
+# Create Accepted Friendship (from invite flow)
+# ============================================
+def create_accepted_friendship(sender_email: str, recipient_email: str):
+    """
+    Write both directional friendship rows in a single transaction with
+    status='accepted' and matching createdAt + acceptedAt timestamps.
+
+    Guarded by attribute_not_exists on both puts so a retry after a partial
+    prior write does not overwrite existing rows (caller should fall back to
+    the existing pending/accept flow if the transaction fails with
+    ConditionalCheckFailedException).
+    """
+    try:
+        client = boto3.client("dynamodb")
+        ts = _get_timestamp()
+
+        client.transact_write_items(
+            TransactItems=[
+                {
+                    "Put": {
+                        "TableName": FRIENDSHIPS_TABLE_NAME,
+                        "Item": {
+                            "email": {"S": sender_email},
+                            "friendEmail": {"S": recipient_email},
+                            "status": {"S": "accepted"},
+                            "direction": {"S": "outgoing"},
+                            "createdAt": {"S": ts},
+                            "acceptedAt": {"S": ts},
+                        },
+                        "ConditionExpression": "attribute_not_exists(email) AND attribute_not_exists(friendEmail)",
+                    }
+                },
+                {
+                    "Put": {
+                        "TableName": FRIENDSHIPS_TABLE_NAME,
+                        "Item": {
+                            "email": {"S": recipient_email},
+                            "friendEmail": {"S": sender_email},
+                            "status": {"S": "accepted"},
+                            "direction": {"S": "incoming"},
+                            "createdAt": {"S": ts},
+                            "acceptedAt": {"S": ts},
+                        },
+                        "ConditionExpression": "attribute_not_exists(email) AND attribute_not_exists(friendEmail)",
+                    }
+                },
+            ]
+        )
+        log.info(
+            f"Accepted friendship created between {sender_email} and {recipient_email}"
+        )
+        return True
+
+    except Exception as err:
+        log.error(f"Create Accepted Friendship error: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="create_accepted_friendship",
+            table=FRIENDSHIPS_TABLE_NAME,
+        )

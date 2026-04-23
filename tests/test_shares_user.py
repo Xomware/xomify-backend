@@ -1,0 +1,85 @@
+"""
+Tests for shares_user lambda
+"""
+
+import json
+from unittest.mock import patch
+
+from lambdas.shares_user.handler import handler
+
+
+def _event(api_gateway_event, params):
+    return {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/shares/user",
+        "queryStringParameters": params,
+    }
+
+
+@patch('lambdas.shares_user.handler.list_shares_for_user')
+def test_shares_user_happy_path(mock_list, mock_context, api_gateway_event):
+    mock_list.return_value = (
+        [
+            {"shareId": "1", "email": "target@example.com", "createdAt": "2026-04-22T12:00:00+00:00"},
+            {"shareId": "2", "email": "target@example.com", "createdAt": "2026-04-21T12:00:00+00:00"},
+        ],
+        None,
+    )
+
+    response = handler(
+        _event(api_gateway_event, {"email": "me@example.com", "targetEmail": "target@example.com"}),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert len(body['shares']) == 2
+    assert body['nextBefore'] is None
+    mock_list.assert_called_once_with("target@example.com", limit=50, before=None)
+
+
+@patch('lambdas.shares_user.handler.list_shares_for_user')
+def test_shares_user_pagination_cursor(mock_list, mock_context, api_gateway_event):
+    mock_list.return_value = ([], "2026-04-20T00:00:00+00:00")
+
+    response = handler(
+        _event(api_gateway_event, {
+            "email": "me@example.com",
+            "targetEmail": "target@example.com",
+            "limit": "10",
+            "before": "2026-04-22T00:00:00+00:00",
+        }),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['nextBefore'] == "2026-04-20T00:00:00+00:00"
+    mock_list.assert_called_once_with(
+        "target@example.com", limit=10, before="2026-04-22T00:00:00+00:00"
+    )
+
+
+@patch('lambdas.shares_user.handler.list_shares_for_user')
+def test_shares_user_missing_target(mock_list, mock_context, api_gateway_event):
+    response = handler(
+        _event(api_gateway_event, {"email": "me@example.com"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 400
+    mock_list.assert_not_called()
+
+
+@patch('lambdas.shares_user.handler.list_shares_for_user')
+def test_shares_user_limit_exceeds_max(mock_list, mock_context, api_gateway_event):
+    response = handler(
+        _event(api_gateway_event, {
+            "email": "me@example.com",
+            "targetEmail": "target@example.com",
+            "limit": "500",
+        }),
+        mock_context,
+    )
+    assert response['statusCode'] == 400
+    mock_list.assert_not_called()
