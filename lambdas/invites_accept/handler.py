@@ -1,23 +1,50 @@
 """
-POST /invites/accept - Accept an invite code and auto-friend the issuer
+POST /invites/accept - Consume an invite code and auto-friend the sender.
 """
 
+from datetime import datetime, timezone
+
+from botocore.exceptions import ClientError
+
 from lambdas.common.logger import get_logger
-from lambdas.common.errors import handle_errors, NotFoundError, ValidationError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
-from lambdas.common.invites_dynamo import (
-    get_invite,
-    is_invite_expired,
-    mark_invite_accepted,
+from lambdas.common.errors import (
+    handle_errors,
+    NotFoundError,
+    ValidationError,
+    XomifyError,
+    DynamoDBError,
 )
+from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.invites_dynamo import get_invite, consume_invite
 from lambdas.common.friendships_dynamo import (
-    send_friend_request,
-    accept_friend_request,
+    list_all_friends_for_user,
+    create_accepted_friendship,
 )
 
 log = get_logger(__file__)
 
 HANDLER = 'invites_accept'
+
+
+def _parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        # fromisoformat accepts the isoformat() output produced by _iso_now()
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def _is_already_friends(email: str, other_email: str) -> bool:
+    friends = list_all_friends_for_user(email)
+    for f in friends:
+        if f.get('friendEmail') == other_email and f.get('status') == 'accepted':
+            return True
+    return False
 
 
 @handle_errors(HANDLER)
@@ -28,7 +55,7 @@ def handler(event, context):
     email = body.get('email')
     invite_code = body.get('inviteCode')
 
-    log.info(f"User {email} attempting to accept invite {invite_code}")
+    log.info(f"User {email} accepting invite {invite_code}")
 
     invite = get_invite(invite_code)
     if not invite:
@@ -36,55 +63,83 @@ def handler(event, context):
             message=f"Invite code {invite_code} not found",
             handler=HANDLER,
             function='handler',
-            resource='invite'
+            resource='invite',
         )
 
-    status = invite.get('status')
-    if status != 'pending':
+    sender_email = invite.get('senderEmail')
+    if not sender_email:
         raise ValidationError(
-            message=f"Invite is not pending (current status: {status})",
+            message="Invite is missing senderEmail",
             handler=HANDLER,
             function='handler',
-            field='status'
+            field='senderEmail',
         )
 
-    if is_invite_expired(invite):
-        raise ValidationError(
-            message="Invite has expired",
-            handler=HANDLER,
-            function='handler',
-            field='expiresAt'
-        )
-
-    issuer_email = invite.get('email')
-    if not issuer_email:
-        raise ValidationError(
-            message="Invite is missing issuer email",
-            handler=HANDLER,
-            function='handler',
-            field='email'
-        )
-
-    if issuer_email == email:
+    if sender_email == email:
         raise ValidationError(
             message="You cannot accept your own invite",
             handler=HANDLER,
             function='handler',
-            field='email'
+            field='email',
         )
 
-    # Mark invite accepted
-    mark_invite_accepted(invite_code, email)
+    # 410 Gone: already consumed
+    if invite.get('consumedAt'):
+        raise XomifyError(
+            message="Invite has already been consumed",
+            handler=HANDLER,
+            function='handler',
+            status=410,
+            details={"error_code": "INVITE_CONSUMED"},
+        )
 
-    # Auto-friend: issuer sends request, acceptor accepts, resulting in immediate friendship
-    log.info(f"Auto-friending {issuer_email} and {email} via invite {invite_code}")
-    send_friend_request(issuer_email, email)
-    accept_friend_request(email, issuer_email)
+    # 410 Gone: expired
+    expires_at = _parse_iso(invite.get('expiresAt'))
+    if expires_at is None or expires_at < datetime.now(timezone.utc):
+        raise XomifyError(
+            message="Invite has expired",
+            handler=HANDLER,
+            function='handler',
+            status=410,
+            details={"error_code": "INVITE_EXPIRED"},
+        )
 
-    log.info(f"Invite {invite_code} accepted and friendship established")
+    # 409 Conflict: already friends
+    if _is_already_friends(email, sender_email):
+        raise XomifyError(
+            message=f"You are already friends with {sender_email}",
+            handler=HANDLER,
+            function='handler',
+            status=409,
+            details={"error_code": "ALREADY_FRIENDS"},
+        )
+
+    # Atomic consume — guards against concurrent accepts
+    try:
+        consume_invite(invite_code, email)
+    except ClientError as err:
+        code = err.response.get("Error", {}).get("Code")
+        if code == "ConditionalCheckFailedException":
+            raise XomifyError(
+                message="Invite is no longer available",
+                handler=HANDLER,
+                function='handler',
+                status=410,
+                details={"error_code": "INVITE_UNAVAILABLE"},
+            )
+        raise DynamoDBError(
+            message=str(err),
+            handler=HANDLER,
+            function='consume_invite',
+        )
+
+    # Establish accepted friendship in one transaction
+    create_accepted_friendship(sender_email, email)
+
+    log.info(f"Invite {invite_code} accepted; {sender_email} <-> {email} now friends")
 
     return success_response({
-        'success': True,
+        'ok': True,
+        'senderEmail': sender_email,
         'inviteCode': invite_code,
-        'friendEmail': issuer_email
     })

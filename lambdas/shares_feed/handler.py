@@ -1,20 +1,60 @@
 """
-GET /shares/feed - Get merged feed of shares from user + accepted friends
+GET /shares/feed - Merged feed of shares from the requester + accepted friends
+                   (optionally filtered to a specific group).
 """
 
 from lambdas.common.logger import get_logger
-from lambdas.common.errors import handle_errors
+from lambdas.common.errors import handle_errors, ValidationError
 from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
 from lambdas.common.friendships_dynamo import list_all_friends_for_user
-from lambdas.common.shares_dynamo import list_shares_for_user
-from lambdas.common.interactions_dynamo import count_interactions_for_share
+from lambdas.common.group_members_dynamo import list_members_of_group
+from lambdas.common.shares_dynamo import query_feed_for_emails
 
 log = get_logger(__file__)
 
 HANDLER = 'shares_feed'
 
-PER_USER_LIMIT = 20
-FEED_CAP = 50
+DEFAULT_LIMIT = 50
+MAX_LIMIT = 100
+
+
+def _parse_limit(raw: str | None) -> int:
+    if raw is None:
+        return DEFAULT_LIMIT
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            message="limit must be an integer",
+            handler=HANDLER,
+            function='handler',
+            field='limit',
+        )
+    if limit <= 0:
+        raise ValidationError(
+            message="limit must be > 0",
+            handler=HANDLER,
+            function='handler',
+            field='limit',
+        )
+    if limit > MAX_LIMIT:
+        raise ValidationError(
+            message=f"limit cannot exceed {MAX_LIMIT}",
+            handler=HANDLER,
+            function='handler',
+            field='limit',
+        )
+    return limit
+
+
+def _enrich(share: dict) -> dict:
+    """Stub enrichment — sub-feature #4 fills these in for real."""
+    share.setdefault('queuedCount', 0)
+    share.setdefault('ratedCount', 0)
+    share.setdefault('viewerHasQueued', False)
+    share.setdefault('viewerRating', None)
+    share.setdefault('sharerRating', None)
+    return share
 
 
 @handle_errors(HANDLER)
@@ -23,53 +63,36 @@ def handler(event, context):
     require_fields(params, 'email')
 
     email = params.get('email')
+    group_id = params.get('groupId')
+    limit = _parse_limit(params.get('limit'))
+    before = params.get('before')
 
-    log.info(f"Building feed for user {email}")
+    log.info(f"Building feed for {email} (groupId={group_id}, limit={limit}, before={before})")
 
-    # Friends list — only accepted
+    # Friends list — filter to accepted only, include requester themselves
     friends = list_all_friends_for_user(email)
-    accepted_emails = [
+    feed_emails: set[str] = {
         f.get('friendEmail')
         for f in friends
         if f.get('status') == 'accepted' and f.get('friendEmail')
-    ]
-
-    # Include the user themselves
-    feed_emails = set(accepted_emails)
+    }
     feed_emails.add(email)
 
-    log.info(f"Fetching shares for {len(feed_emails)} users (self + {len(accepted_emails)} accepted friends)")
+    # Optional group filter — intersect with members of the group
+    if group_id:
+        members = list_members_of_group(group_id)
+        member_emails = {m.get('email') for m in members if m.get('email')}
+        feed_emails = feed_emails & member_emails
+        log.info(f"After group filter: {len(feed_emails)} authors in set")
 
-    # Collect shares from each user
-    all_shares = []
-    for user_email in feed_emails:
-        try:
-            user_shares = list_shares_for_user(user_email, limit=PER_USER_LIMIT)
-            all_shares.extend(user_shares)
-        except Exception as err:
-            log.warning(f"Failed to fetch shares for {user_email}: {err}")
-            continue
+    if not feed_emails:
+        return success_response({'shares': [], 'nextBefore': None})
 
-    # Sort newest first by createdAt
-    all_shares.sort(key=lambda s: s.get('createdAt', ''), reverse=True)
+    shares = query_feed_for_emails(sorted(feed_emails), limit=limit, before=before)
+    shares = [_enrich(s) for s in shares]
 
-    # Cap
-    all_shares = all_shares[:FEED_CAP]
+    # Cursor for next page: createdAt of the oldest returned share if we hit the limit
+    next_before = shares[-1].get('createdAt') if len(shares) == limit and shares else None
 
-    # Attach interaction counts per share
-    for share in all_shares:
-        share_id = share.get('shareId')
-        if share_id:
-            try:
-                share['interactionCounts'] = count_interactions_for_share(share_id)
-            except Exception as err:
-                log.warning(f"Failed to count interactions for share {share_id}: {err}")
-                share['interactionCounts'] = {}
-
-    log.info(f"Returning {len(all_shares)} shares for {email}'s feed")
-
-    return success_response({
-        'email': email,
-        'shares': all_shares,
-        'totalCount': len(all_shares)
-    })
+    log.info(f"Returning {len(shares)} shares for {email}'s feed (nextBefore={next_before})")
+    return success_response({'shares': shares, 'nextBefore': next_before})

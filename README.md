@@ -112,6 +112,31 @@ Returns user data including enrollment status.
 **POST** `/user/user-table`
 Update user enrollments or refresh token.
 
+### Shares Service (`/shares`)
+
+**POST** `/shares/create`
+Create a new track share. Body: `{ email, trackId, trackUri, trackName, artistName, albumName, albumArtUrl, caption?, moodTag?, genreTags? }`. `moodTag` must be one of `hype|chill|sad|party|focus|discovery`; `caption` max 140 chars; `genreTags` max 3.
+
+**GET** `/shares/feed?email={email}&groupId={optional}&limit={<=100}&before={isoCursor}`
+Merged feed of shares from the requester and their accepted friends, newest first. Returns `{ shares: [...], nextBefore }`.
+
+**DELETE** `/shares/delete?email={email}&shareId={shareId}`
+Delete a share. Returns 204 on success, 401 if the requester is not the owner, 404 if the share does not exist.
+
+**GET** `/shares/user?email={email}&targetEmail={target}&limit={<=100}&before={isoCursor}`
+List shares authored by `targetEmail`, newest first.
+
+**POST** `/shares/react`
+Toggle or set a reaction on a share (see sub-feature #4 for full schema).
+
+### Invites Service (`/invites`)
+
+**POST** `/invites/create`
+Body: `{ email }`. Issues an 8-char base32 invite code. Max 10 outstanding invites per sender (returns 429 if exceeded). Returns `{ inviteCode, inviteUrl, expiresAt, createdAt }`.
+
+**POST** `/invites/accept`
+Body: `{ email, inviteCode }`. Consumes an invite atomically and auto-creates an accepted friendship with the sender. Returns 410 if the invite is expired or already consumed, 409 if the two users are already friends, 400 on self-invite.
+
 ## Environment Setup
 
 ### AWS SSM Parameters Required

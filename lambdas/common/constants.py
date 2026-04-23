@@ -29,6 +29,10 @@ SHARES_TABLE_NAME = os.environ.get('SHARES_TABLE_NAME', '')
 SHARE_INTERACTIONS_TABLE_NAME = os.environ.get('SHARE_INTERACTIONS_TABLE_NAME', '')
 INVITES_TABLE_NAME = os.environ.get('INVITES_TABLE_NAME', '')
 
+# Shares GSI + invite URL template (backend-shares sub-feature)
+SHARES_EMAIL_INDEX = os.environ.get('SHARES_EMAIL_INDEX', 'email-createdAt-index')
+INVITE_URL_TEMPLATE = os.environ.get('INVITE_URL_TEMPLATE', 'https://xomify.app/invite/{code}')
+
 # Email Service
 FROM_EMAIL = os.environ.get('FROM_EMAIL', 'noreply@xomify.xomware.com')
 XOMIFY_URL = "https://xomify.xomware.com"

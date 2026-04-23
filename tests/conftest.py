@@ -22,6 +22,11 @@ _TEST_ENV_VARS = {
     "GROUP_MEMBERS_TABLE_NAME": "xomify-group-members-test",
     "GROUP_TRACKS_TABLE_NAME": "xomify-group-tracks-test",
     "TRACK_RATINGS_TABLE_NAME": "xomify-track-ratings-test",
+    "SHARES_TABLE_NAME": "xomify-shares-test",
+    "SHARE_INTERACTIONS_TABLE_NAME": "xomify-share-interactions-test",
+    "INVITES_TABLE_NAME": "xomify-invites-test",
+    "SHARES_EMAIL_INDEX": "email-createdAt-index",
+    "INVITE_URL_TEMPLATE": "https://xomify.test/invite/{code}",
 }
 for key, value in _TEST_ENV_VARS.items():
     os.environ.setdefault(key, value)
