@@ -32,17 +32,22 @@ def handler(event, context):
     if not user_member or user_member.get('role') != 'owner':
         raise ValidationError("Only group owner can update group", field="email")
 
-    # Build update expression
+    # Build update expression.
+    # `name` is a DynamoDB reserved keyword, so we alias both attributes via
+    # ExpressionAttributeNames to stay safe regardless of future renames.
     update_parts = []
     attr_values = {}
+    attr_names = {}
 
     if name:
-        update_parts.append("name = :name")
+        update_parts.append("#name = :name")
         attr_values[':name'] = name
+        attr_names['#name'] = 'name'
 
     if description is not None:
-        update_parts.append("description = :desc")
+        update_parts.append("#desc = :desc")
         attr_values[':desc'] = description
+        attr_names['#desc'] = 'description'
 
     if not update_parts:
         raise ValidationError("No fields to update")
@@ -53,7 +58,8 @@ def handler(event, context):
     table.update_item(
         Key={'groupId': group_id},
         UpdateExpression="SET " + ", ".join(update_parts),
-        ExpressionAttributeValues=attr_values
+        ExpressionAttributeValues=attr_values,
+        ExpressionAttributeNames=attr_names
     )
 
     log.info(f"Group {group_id} updated by {email}")

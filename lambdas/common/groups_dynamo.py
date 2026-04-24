@@ -31,12 +31,15 @@ def create_group(group_id: str, name: str, created_by: str, image_url: str | Non
     try:
         table = dynamodb.Table(GROUPS_TABLE_NAME)
 
+        # Seed memberCount at 0 — groups_create calls add_group_member for
+        # the owner immediately after, which atomically increments this to 1.
+        # Seeding at 1 previously caused an off-by-one (every group started at 2).
         item = {
             "groupId": group_id,
             "name": name,
             "createdBy": created_by,
             "createdAt": _get_timestamp(),
-            "memberCount": 1
+            "memberCount": 0
         }
 
         if image_url:
