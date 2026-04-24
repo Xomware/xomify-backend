@@ -1,11 +1,21 @@
 """
-POST /shares/create - Create a new share (track share with denormalized metadata)
+POST /shares/create - Create a new share (track share with denormalized metadata).
+
+Multi-target semantics (v2):
+- Callers may set `groupIds` (list of group ids) and/or `public` (bool) to
+  target the public friends feed, one-or-more groups, or both.
+- Defaults: `groupIds=[]`, `public=True` -> legacy public share on the
+  friends feed only.
+- `public=False` with an empty `groupIds` is invalid (no target) -> 400.
+- Every entry in `groupIds` must reference a group the caller is a member
+  of; non-members get a 403.
 """
 
 from lambdas.common.logger import get_logger
-from lambdas.common.errors import handle_errors, ValidationError
+from lambdas.common.errors import handle_errors, ValidationError, AuthorizationError
 from lambdas.common.utility_helpers import success_response, parse_body, require_fields
 from lambdas.common.shares_dynamo import create_share
+from lambdas.common.group_members_dynamo import is_member_of_group
 
 log = get_logger(__file__)
 
@@ -14,6 +24,63 @@ HANDLER = 'shares_create'
 ALLOWED_MOODS = {"hype", "chill", "sad", "party", "focus", "discovery"}
 CAPTION_MAX_LEN = 140
 GENRE_TAGS_MAX = 3
+
+
+def _coerce_public(raw) -> bool:
+    """Accept bool or the common stringy forms ('true'/'false') iOS may send."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() != 'false'
+    # Anything truthy-but-unexpected -> treat as True (default-open, matches spec).
+    return bool(raw)
+
+
+def _validate_group_ids(raw, email: str) -> list[str]:
+    """Normalize + validate `groupIds`. Returns the deduped list of ids.
+
+    Raises ValidationError for malformed inputs; AuthorizationError when the
+    caller is not a member of every requested group (403 per spec)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError(
+            message="groupIds must be a list of group ids",
+            handler=HANDLER,
+            function='handler',
+            field='groupIds',
+        )
+
+    # Preserve order but drop duplicates / blanks.
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for gid in raw:
+        if not isinstance(gid, str) or not gid.strip():
+            raise ValidationError(
+                message="groupIds entries must be non-empty strings",
+                handler=HANDLER,
+                function='handler',
+                field='groupIds',
+            )
+        gid = gid.strip()
+        if gid in seen:
+            continue
+        seen.add(gid)
+        cleaned.append(gid)
+
+    # Membership gate — caller must belong to every group they're targeting.
+    for gid in cleaned:
+        if not is_member_of_group(email, gid):
+            log.warning(
+                f"shares_create membership check failed: {email} is not a member of {gid}"
+            )
+            raise AuthorizationError(
+                message=f"Not a member of group {gid}",
+                handler=HANDLER,
+                function='handler',
+            )
+
+    return cleaned
 
 
 @handle_errors(HANDLER)
@@ -40,6 +107,18 @@ def handler(event, context):
     caption = body.get('caption')
     mood_tag = body.get('moodTag')
     genre_tags = body.get('genreTags')
+
+    # Multi-target fields — default to legacy "public only" share.
+    public = _coerce_public(body.get('public', True))
+    group_ids = _validate_group_ids(body.get('groupIds'), email=email)
+
+    if not public and not group_ids:
+        raise ValidationError(
+            message="Specify at least one target.",
+            handler=HANDLER,
+            function='handler',
+            field='groupIds',
+        )
 
     # Caption length
     if caption is not None and len(caption) > CAPTION_MAX_LEN:
@@ -76,7 +155,10 @@ def handler(event, context):
                 field='genreTags',
             )
 
-    log.info(f"User {email} creating share for track {track_id}")
+    log.info(
+        f"User {email} creating share for track {track_id} "
+        f"(public={public}, groupIds={group_ids})"
+    )
     result = create_share(
         email=email,
         track_id=track_id,
@@ -88,6 +170,8 @@ def handler(event, context):
         caption=caption,
         mood_tag=mood_tag,
         genre_tags=genre_tags,
+        group_ids=group_ids,
+        public=public,
     )
 
     log.info(f"Share {result['shareId']} created successfully")
