@@ -29,15 +29,23 @@ def handler(event, context):
     pending = []
 
     for friend in friends:
-        if friend['status'] == 'accepted':
+        status = friend.get('status')
+        if status == 'accepted':
             accepted.append(friend)
-        elif friend['status'] == 'pending':
-            if friend['direction'] == 'outgoing':
+        elif status == 'pending':
+            # Legacy rows may be missing `direction`; treat unknown as
+            # incoming so a single bad row can't 500 the whole response.
+            if friend.get('direction') == 'outgoing':
                 requested.append(friend)
             else:
                 pending.append(friend)
-        else:
+        elif status == 'blocked':
             blocked.append(friend)
+        else:
+            log.warning(
+                f"Skipping friend row with unexpected status={status!r} "
+                f"for {email}: {friend.get('friendEmail') or friend.get('email')}"
+            )
 
     log.info(f"Found {len(friends)} friends for user {email}")
 
