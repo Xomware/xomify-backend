@@ -330,6 +330,48 @@ def get_user_table_data(email: str) -> dict:
         raise
 
 
+def batch_get_users(emails: list[str]) -> dict:
+    """
+    BatchGetItem helper for the USERS table — returns a
+    {email: {email, displayName, avatar, ...}} map.
+
+    DynamoDB caps BatchGetItem at 100 keys per call; we chunk
+    transparently. Missing emails are simply absent from the map
+    (callers should handle the miss). Duplicates are deduped first
+    to avoid wasted RCUs.
+    """
+    if not emails:
+        return {}
+
+    unique = [e for e in {x for x in emails if x}]
+    out: dict[str, dict] = {}
+
+    for i in range(0, len(unique), 100):
+        chunk = unique[i:i + 100]
+        try:
+            response = dynamodb.batch_get_item(
+                RequestItems={
+                    USERS_TABLE_NAME: {
+                        "Keys": [{"email": e} for e in chunk]
+                    }
+                }
+            )
+            items = response.get("Responses", {}).get(USERS_TABLE_NAME, []) or []
+            for item in items:
+                email = item.get("email")
+                if email:
+                    out[email] = item
+        except Exception as err:
+            log.error(f"Batch get users failed: {err}")
+            raise DynamoDBError(
+                message=str(err),
+                function="batch_get_users",
+                table=USERS_TABLE_NAME,
+            )
+
+    return out
+
+
 # ============================================
 # Wrapped History Table Operations
 # ============================================

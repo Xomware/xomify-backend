@@ -2,6 +2,11 @@
 Tests for groups_list lambda — ensures membership rows are hydrated
 with full Group metadata before returning, so clients don't see
 headless rows that fail to decode.
+
+memberCount is always recomputed live from the membership GSI — the
+cached attribute on the GROUPS row has historically drifted (old seed
+set fresh 1-member groups to 2 until PR #136). The handler also issues
+a best-effort write-back to heal the stored value.
 """
 
 import json
@@ -10,10 +15,13 @@ from unittest.mock import patch
 from lambdas.groups_list.handler import handler
 
 
+@patch('lambdas.groups_list.handler.update_group_member_count')
+@patch('lambdas.groups_list.handler.list_members_of_group')
 @patch('lambdas.groups_list.handler.batch_get_groups')
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_hydrates_membership_with_group_metadata(
-    mock_list_memberships, mock_batch_get, mock_context, api_gateway_event
+    mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
+    mock_context, api_gateway_event,
 ):
     """Membership rows get merged with the full Group item so `name`,
     `createdBy`, `memberCount` end up on the wire."""
@@ -25,6 +33,11 @@ def test_groups_list_hydrates_membership_with_group_metadata(
         {"groupId": "g1", "name": "Summer Tunes", "createdBy": "test@example.com", "memberCount": 4, "createdAt": "2026-01-01 00:00:00"},
         {"groupId": "g2", "name": "Road Trip",   "createdBy": "other@example.com", "memberCount": 7, "createdAt": "2026-01-10 00:00:00"}
     ]
+    # Live membership matches cached counts -> no heal.
+    mock_list_members.side_effect = lambda gid: (
+        [{"email": f"u{i}@example.com"} for i in range(4)] if gid == 'g1'
+        else [{"email": f"u{i}@example.com"} for i in range(7)]
+    )
 
     event = {
         **api_gateway_event,
@@ -49,12 +62,19 @@ def test_groups_list_hydrates_membership_with_group_metadata(
     g2 = next(g for g in body['groups'] if g['groupId'] == 'g2')
     assert g2['name'] == 'Road Trip'
     assert g2['role'] == 'member'
+    assert g2['memberCount'] == 7
+
+    # Cached == live so no heal should fire.
+    mock_update_count.assert_not_called()
 
 
+@patch('lambdas.groups_list.handler.update_group_member_count')
+@patch('lambdas.groups_list.handler.list_members_of_group')
 @patch('lambdas.groups_list.handler.batch_get_groups')
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_drops_memberships_with_missing_group(
-    mock_list_memberships, mock_batch_get, mock_context, api_gateway_event
+    mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
+    mock_context, api_gateway_event,
 ):
     """If the Groups table no longer has a row for a membership's groupId
     (e.g. the group was deleted but the membership wasn't cleaned up), the
@@ -65,6 +85,10 @@ def test_groups_list_drops_memberships_with_missing_group(
     ]
     mock_batch_get.return_value = [
         {"groupId": "alive", "name": "Still Here", "createdBy": "owner@test.com", "memberCount": 2}
+    ]
+    mock_list_members.return_value = [
+        {"email": "owner@test.com"},
+        {"email": "test@example.com"},
     ]
 
     event = {
@@ -80,12 +104,16 @@ def test_groups_list_drops_memberships_with_missing_group(
     body = json.loads(response['body'])
     assert body['totalGroups'] == 1
     assert body['groups'][0]['groupId'] == 'alive'
+    assert body['groups'][0]['memberCount'] == 2
 
 
+@patch('lambdas.groups_list.handler.update_group_member_count')
+@patch('lambdas.groups_list.handler.list_members_of_group')
 @patch('lambdas.groups_list.handler.batch_get_groups')
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_empty(
-    mock_list_memberships, mock_batch_get, mock_context, api_gateway_event
+    mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
+    mock_context, api_gateway_event,
 ):
     mock_list_memberships.return_value = []
     mock_batch_get.return_value = []
@@ -103,3 +131,77 @@ def test_groups_list_empty(
     body = json.loads(response['body'])
     assert body['totalGroups'] == 0
     assert body['groups'] == []
+    mock_list_members.assert_not_called()
+    mock_update_count.assert_not_called()
+
+
+@patch('lambdas.groups_list.handler.update_group_member_count')
+@patch('lambdas.groups_list.handler.list_members_of_group')
+@patch('lambdas.groups_list.handler.batch_get_groups')
+@patch('lambdas.groups_list.handler.list_groups_for_user')
+def test_groups_list_returns_live_member_count_when_cache_is_stale(
+    mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
+    mock_context, api_gateway_event,
+):
+    """Regression test for the seed-bug leftover: cached memberCount=2 on a
+    group that actually has 1 member. The response must carry the live count,
+    and the handler should opportunistically heal the stored value."""
+    mock_list_memberships.return_value = [
+        {"email": "solo@example.com", "groupId": "stale", "role": "owner"},
+    ]
+    # Stale cached value — the bug that motivated this fix.
+    mock_batch_get.return_value = [
+        {"groupId": "stale", "name": "Just Me", "createdBy": "solo@example.com", "memberCount": 2}
+    ]
+    # GSI shows the group truly has one member.
+    mock_list_members.return_value = [{"email": "solo@example.com"}]
+
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/groups/list",
+        "queryStringParameters": {"email": "solo@example.com"}
+    }
+
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['totalGroups'] == 1
+    assert body['groups'][0]['memberCount'] == 1, (
+        "response must carry live count, not cached stale value"
+    )
+    # Heal fired exactly once with the corrected count.
+    mock_update_count.assert_called_once_with("stale", 1)
+
+
+@patch('lambdas.groups_list.handler.update_group_member_count')
+@patch('lambdas.groups_list.handler.list_members_of_group')
+@patch('lambdas.groups_list.handler.batch_get_groups')
+@patch('lambdas.groups_list.handler.list_groups_for_user')
+def test_groups_list_heal_failure_does_not_break_response(
+    mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
+    mock_context, api_gateway_event,
+):
+    """A blow-up from the best-effort write-back must not fail the request."""
+    mock_list_memberships.return_value = [
+        {"email": "solo@example.com", "groupId": "stale", "role": "owner"},
+    ]
+    mock_batch_get.return_value = [
+        {"groupId": "stale", "name": "Just Me", "createdBy": "solo@example.com", "memberCount": 2}
+    ]
+    mock_list_members.return_value = [{"email": "solo@example.com"}]
+    mock_update_count.side_effect = RuntimeError("DynamoDB threw")
+
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/groups/list",
+        "queryStringParameters": {"email": "solo@example.com"}
+    }
+
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['groups'][0]['memberCount'] == 1

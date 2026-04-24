@@ -113,6 +113,33 @@ def batch_get_groups(group_ids: list[str]) -> list[dict]:
     return out
 
 
+def update_group_member_count(group_id: str, member_count: int) -> bool:
+    """
+    Overwrite the cached `memberCount` attribute on a GROUPS row.
+
+    Used by /groups/list to heal stale counts left over from the pre-PR#136
+    seed bug. Callers should treat failures as non-fatal — this is a
+    best-effort self-heal, never a required side effect.
+    """
+    try:
+        table = dynamodb.Table(GROUPS_TABLE_NAME)
+        table.update_item(
+            Key={"groupId": group_id},
+            UpdateExpression="SET memberCount = :c",
+            ExpressionAttributeValues={":c": member_count},
+            ConditionExpression="attribute_exists(groupId)",
+        )
+        return True
+
+    except Exception as err:
+        log.error(f"Update Group Member Count failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="update_group_member_count",
+            table=GROUPS_TABLE_NAME,
+        )
+
+
 def _deserialize_item(raw: dict) -> dict:
     """Unwrap DynamoDB low-level attribute format to plain dict."""
     out: dict = {}
