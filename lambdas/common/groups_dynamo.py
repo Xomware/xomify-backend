@@ -68,3 +68,61 @@ def get_group(group_id: str):
             function="get_group",
             table=GROUPS_TABLE_NAME
         )
+
+
+def batch_get_groups(group_ids: list[str]) -> list[dict]:
+    """
+    Fetch multiple Group items in chunks of 100 (DynamoDB BatchGetItem
+    limit). Missing IDs are simply absent from the returned list — callers
+    should handle the membership → group join upstream.
+    """
+    if not group_ids:
+        return []
+
+    client = boto3.client("dynamodb", region_name="us-east-1")
+    out: list[dict] = []
+
+    # BatchGetItem caps at 100 keys per call. We deduplicate first to avoid
+    # wasted throughput when a user has duplicate membership rows.
+    unique_ids = list({gid for gid in group_ids if gid})
+
+    for i in range(0, len(unique_ids), 100):
+        chunk = unique_ids[i:i + 100]
+        try:
+            res = client.batch_get_item(
+                RequestItems={
+                    GROUPS_TABLE_NAME: {
+                        "Keys": [{"groupId": {"S": gid}} for gid in chunk]
+                    }
+                }
+            )
+            raw_items = res.get("Responses", {}).get(GROUPS_TABLE_NAME, [])
+            for raw in raw_items:
+                out.append(_deserialize_item(raw))
+        except Exception as err:
+            log.error(f"Batch Get Groups failed: {err}")
+            raise DynamoDBError(
+                message=str(err),
+                function="batch_get_groups",
+                table=GROUPS_TABLE_NAME
+            )
+
+    return out
+
+
+def _deserialize_item(raw: dict) -> dict:
+    """Unwrap DynamoDB low-level attribute format to plain dict."""
+    out: dict = {}
+    for key, val in raw.items():
+        if "S" in val:
+            out[key] = val["S"]
+        elif "N" in val:
+            try:
+                out[key] = int(val["N"])
+            except ValueError:
+                out[key] = float(val["N"])
+        elif "BOOL" in val:
+            out[key] = val["BOOL"]
+        elif "NULL" in val:
+            out[key] = None
+    return out
