@@ -1,6 +1,15 @@
 """
 GET /shares/feed - Merged feed of shares from the requester + accepted friends
                    (optionally filtered to a specific group).
+
+Visibility rules (v2):
+- Public friends feed (`groupId` unset) -> include rows where `public` is
+  True OR the field is absent (legacy rows default-open).
+- Group-scoped feed (`groupId` set) -> include rows where the query's
+  `groupId` is in the row's `groupIds` list. Works for both dual shares
+  (public + groups) and group-only shares. Authors must still be in the
+  friends ∪ self set intersected with the group's membership (existing
+  check).
 """
 
 from lambdas.common.logger import get_logger
@@ -46,6 +55,19 @@ def _parse_limit(raw: str | None) -> int:
             field='limit',
         )
     return limit
+
+
+def _is_public_row(share: dict) -> bool:
+    """Missing `public` is treated as True for legacy rows."""
+    val = share.get('public')
+    return True if val is None else bool(val)
+
+
+def _row_targets_group(share: dict, group_id: str) -> bool:
+    group_ids = share.get('groupIds') or []
+    if not isinstance(group_ids, list):
+        return False
+    return group_id in group_ids
 
 
 def _enrich(share: dict, viewer_email: str) -> dict:
@@ -106,6 +128,15 @@ def handler(event, context):
         return success_response({'shares': [], 'nextBefore': None})
 
     shares = query_feed_for_emails(sorted(feed_emails), limit=limit, before=before)
+
+    # Visibility filter — applied AFTER the fan-out so pagination cursors
+    # remain stable against createdAt. Public feed hides group-only rows;
+    # group feed keeps only rows whose groupIds contain the requested group.
+    if group_id:
+        shares = [s for s in shares if _row_targets_group(s, group_id)]
+    else:
+        shares = [s for s in shares if _is_public_row(s)]
+
     shares = [_enrich(s, email) for s in shares]
 
     # Cursor for next page: createdAt of the oldest returned share if we hit the limit

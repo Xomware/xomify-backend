@@ -52,6 +52,7 @@ from lambdas.common.interactions_dynamo import (
 from lambdas.common.friendships_dynamo import list_all_friends_for_user
 from lambdas.common.track_ratings_dynamo import list_all_track_ratings_for_user
 from lambdas.common.dynamo_helpers import batch_get_users
+from lambdas.common.group_members_dynamo import is_member_of_group
 
 log = get_logger(__file__)
 
@@ -213,6 +214,27 @@ def handler(event, context):
 
     author_email: Optional[str] = share.get('email')
     track_id: Optional[str] = share.get('trackId')
+
+    # Visibility gate — group-only shares (public == False) must only be
+    # reachable by the author or by a member of at least one of the share's
+    # target groups. Return 404 for non-members so we don't leak existence.
+    is_public = share.get('public', True)
+    if not is_public and viewer_email != author_email:
+        target_group_ids = share.get('groupIds') or []
+        is_allowed = any(
+            isinstance(gid, str) and gid and is_member_of_group(viewer_email, gid)
+            for gid in target_group_ids
+        )
+        if not is_allowed:
+            log.warning(
+                f"Viewer {viewer_email} blocked from group-only share {share_id}"
+            )
+            raise NotFoundError(
+                message=f"Share {share_id} not found",
+                handler=HANDLER,
+                function='handler',
+                resource='share',
+            )
 
     reactions = list_reactions_for_share(share_id)
 

@@ -86,6 +86,112 @@ def test_shares_feed_group_filter_intersects(
     assert set(emails_arg) == {"me@example.com", "alice@example.com"}
 
 
+# ------------------------------------------------------------
+# Public / group-only visibility filter (v2)
+# ------------------------------------------------------------
+
+@patch('lambdas.shares_feed.handler.query_feed_for_emails')
+@patch('lambdas.shares_feed.handler.list_all_friends_for_user')
+def test_shares_feed_public_feed_excludes_group_only_rows(
+    mock_friends, mock_query, mock_context, api_gateway_event
+):
+    """Friends feed (no groupId) must hide rows with public=False."""
+    mock_friends.return_value = [
+        {"friendEmail": "alice@example.com", "status": "accepted"},
+    ]
+    mock_query.return_value = [
+        # Legacy row - no `public` field -> default visible
+        {"shareId": "legacy", "email": "alice@example.com",
+         "createdAt": "2026-04-22T12:00:00+00:00"},
+        # Dual share - public=True + groups -> visible
+        {"shareId": "dual", "email": "alice@example.com",
+         "createdAt": "2026-04-22T11:00:00+00:00",
+         "public": True, "groupIds": ["g1"]},
+        # Group-only share - public=False -> hidden from friends feed
+        {"shareId": "group-only", "email": "alice@example.com",
+         "createdAt": "2026-04-22T10:00:00+00:00",
+         "public": False, "groupIds": ["g1"]},
+    ]
+
+    response = handler(
+        _event(api_gateway_event, {"email": "me@example.com"}),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    ids = [s['shareId'] for s in body['shares']]
+    assert "group-only" not in ids
+    assert set(ids) == {"legacy", "dual"}
+
+
+@patch('lambdas.shares_feed.handler.list_members_of_group')
+@patch('lambdas.shares_feed.handler.query_feed_for_emails')
+@patch('lambdas.shares_feed.handler.list_all_friends_for_user')
+def test_shares_feed_group_feed_includes_group_targeted_rows(
+    mock_friends, mock_query, mock_members, mock_context, api_gateway_event
+):
+    """Group feed must include both group-only and dual shares targeted to that
+    group, and must drop rows that don't list the group in groupIds."""
+    mock_friends.return_value = [
+        {"friendEmail": "alice@example.com", "status": "accepted"},
+    ]
+    mock_members.return_value = [
+        {"email": "alice@example.com"},
+        {"email": "me@example.com"},
+    ]
+    mock_query.return_value = [
+        # Targets g1 via dual share
+        {"shareId": "dual", "email": "alice@example.com",
+         "createdAt": "2026-04-22T12:00:00+00:00",
+         "public": True, "groupIds": ["g1", "g2"]},
+        # Targets g1 via group-only share
+        {"shareId": "group-only", "email": "alice@example.com",
+         "createdAt": "2026-04-22T11:00:00+00:00",
+         "public": False, "groupIds": ["g1"]},
+        # Does NOT target g1
+        {"shareId": "other-group", "email": "alice@example.com",
+         "createdAt": "2026-04-22T10:00:00+00:00",
+         "public": False, "groupIds": ["g2"]},
+        # Legacy public-only (no groupIds) -> not in g1's feed
+        {"shareId": "legacy-public", "email": "alice@example.com",
+         "createdAt": "2026-04-22T09:00:00+00:00"},
+    ]
+
+    response = handler(
+        _event(api_gateway_event, {"email": "me@example.com", "groupId": "g1"}),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    ids = {s['shareId'] for s in body['shares']}
+    assert ids == {"dual", "group-only"}
+
+
+@patch('lambdas.shares_feed.handler.query_feed_for_emails')
+@patch('lambdas.shares_feed.handler.list_all_friends_for_user')
+def test_shares_feed_legacy_rows_visible_on_public_feed(
+    mock_friends, mock_query, mock_context, api_gateway_event
+):
+    """Rows written before the multi-target rollout have no `public` field
+    and must stay visible on the public feed."""
+    mock_friends.return_value = []
+    mock_query.return_value = [
+        {"shareId": "legacy-1", "email": "me@example.com",
+         "createdAt": "2026-04-22T12:00:00+00:00"},
+    ]
+
+    response = handler(
+        _event(api_gateway_event, {"email": "me@example.com"}),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert [s['shareId'] for s in body['shares']] == ["legacy-1"]
+
+
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
 def test_shares_feed_limit_exceeds_max(

@@ -137,3 +137,22 @@ def list_members_of_group(group_id: str):
             function="list_members_of_group",
             table=GROUP_MEMBERS_TABLE_NAME
         )
+
+
+def is_member_of_group(email: str, group_id: str) -> bool:
+    """Return True if `email` has a membership row for `group_id`.
+
+    Uses a direct GetItem on the base table (PK=email, SK=groupId) so this
+    stays cheap — no scan, no GSI round-trip.
+    """
+    try:
+        table = dynamodb.Table(GROUP_MEMBERS_TABLE_NAME)
+        res = table.get_item(Key={"email": email, "groupId": group_id})
+        return "Item" in res
+    except Exception as err:
+        log.error(f"Is Member Of Group failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="is_member_of_group",
+            table=GROUP_MEMBERS_TABLE_NAME
+        )

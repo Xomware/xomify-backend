@@ -1,5 +1,9 @@
 """
 GET /shares/user - List shares authored by a specific user (no friendship gate in v1).
+
+Profile view only surfaces PUBLIC shares — group-only shares stay scoped to
+their group feeds and are not leaked via the author's profile. Legacy rows
+(no `public` field) are treated as public so older data keeps flowing.
 """
 
 from lambdas.common.logger import get_logger
@@ -66,6 +70,10 @@ def handler(event, context):
     )
 
     shares, next_before = list_shares_for_user(target_email, limit=limit, before=before)
+
+    # Hide group-only rows from the public profile view. Missing `public`
+    # is treated as True so legacy rows keep showing up.
+    shares = [s for s in shares if s.get('public', True)]
 
     enriched = []
     for share in shares:

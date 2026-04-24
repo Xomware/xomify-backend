@@ -266,6 +266,92 @@ def test_shares_detail_friend_ratings_scoped_to_accepted_friends_only(
     assert "eve@example.com" not in called_emails
 
 
+@patch('lambdas.shares_detail.handler.is_member_of_group')
+@patch('lambdas.shares_detail.handler.get_share')
+def test_shares_detail_group_only_share_blocked_for_non_member(
+    mock_get_share, mock_member, mock_context, api_gateway_event,
+):
+    """Group-only share (public=False) must 404 for a non-member viewer."""
+    share = _share()
+    share['public'] = False
+    share['groupIds'] = ["g1"]
+    mock_get_share.return_value = share
+    mock_member.return_value = False
+
+    response = handler(
+        _event(api_gateway_event, {"email": "stranger@example.com", "shareId": "share-1"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 404
+    mock_member.assert_called_once_with("stranger@example.com", "g1")
+
+
+@patch('lambdas.shares_detail.handler.batch_get_users')
+@patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
+@patch('lambdas.shares_detail.handler.list_all_friends_for_user')
+@patch('lambdas.shares_detail.handler.list_reactions_for_share')
+@patch('lambdas.shares_detail.handler.build_enrichment')
+@patch('lambdas.shares_detail.handler.is_member_of_group')
+@patch('lambdas.shares_detail.handler.get_share')
+def test_shares_detail_group_only_share_accessible_to_member(
+    mock_get_share, mock_member, mock_enrich, mock_reactions,
+    mock_friends, mock_ratings, mock_batch_users,
+    mock_context, api_gateway_event,
+):
+    """Group members must see group-only shares."""
+    share = _share()
+    share['public'] = False
+    share['groupIds'] = ["g1"]
+    mock_get_share.return_value = share
+    mock_member.return_value = True
+    mock_enrich.return_value = {}
+    mock_reactions.return_value = []
+    mock_friends.return_value = []
+    mock_ratings.return_value = []
+    mock_batch_users.return_value = {}
+
+    response = handler(
+        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['share']['shareId'] == 'share-1'
+
+
+@patch('lambdas.shares_detail.handler.batch_get_users')
+@patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
+@patch('lambdas.shares_detail.handler.list_all_friends_for_user')
+@patch('lambdas.shares_detail.handler.list_reactions_for_share')
+@patch('lambdas.shares_detail.handler.build_enrichment')
+@patch('lambdas.shares_detail.handler.is_member_of_group')
+@patch('lambdas.shares_detail.handler.get_share')
+def test_shares_detail_group_only_share_accessible_to_author(
+    mock_get_share, mock_member, mock_enrich, mock_reactions,
+    mock_friends, mock_ratings, mock_batch_users,
+    mock_context, api_gateway_event,
+):
+    """Author can always read their own share even if group-only."""
+    share = _share()
+    share['public'] = False
+    share['groupIds'] = ["g1"]
+    mock_get_share.return_value = share
+    mock_enrich.return_value = {}
+    mock_reactions.return_value = []
+    mock_friends.return_value = []
+    mock_ratings.return_value = []
+    mock_batch_users.return_value = {}
+
+    response = handler(
+        # viewer == author (share fixture uses alice@example.com)
+        _event(api_gateway_event, {"email": "alice@example.com", "shareId": "share-1"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 200
+    # No need to hit the membership helper for the author.
+    mock_member.assert_not_called()
+
+
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')

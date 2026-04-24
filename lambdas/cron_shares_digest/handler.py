@@ -66,8 +66,14 @@ def _count_recent_shares_from_friends(email: str, cutoff_iso: str) -> int:
             continue
         for share in shares:
             created_at = share.get("createdAt", "")
-            if created_at >= cutoff_iso:
-                total += 1
+            if created_at < cutoff_iso:
+                continue
+            # Digest mirrors the public friends feed — don't count
+            # group-only shares. Legacy rows (no `public` field) default
+            # to visible.
+            if not share.get("public", True):
+                continue
+            total += 1
     return total
 
 

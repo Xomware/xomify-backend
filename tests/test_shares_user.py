@@ -83,3 +83,44 @@ def test_shares_user_limit_exceeds_max(mock_list, mock_context, api_gateway_even
     )
     assert response['statusCode'] == 400
     mock_list.assert_not_called()
+
+
+@patch('lambdas.shares_user.handler.build_enrichment')
+@patch('lambdas.shares_user.handler.list_shares_for_user')
+def test_shares_user_hides_group_only_shares(
+    mock_list, mock_enrich, mock_context, api_gateway_event
+):
+    """Profile view only surfaces public shares — group-only rows stay scoped
+    to their group feeds. Legacy rows (no `public` field) remain visible."""
+    mock_enrich.return_value = {
+        "queuedCount": 0, "ratedCount": 0,
+        "viewerHasQueued": False, "viewerRating": None, "sharerRating": None,
+    }
+    mock_list.return_value = (
+        [
+            # Legacy row — default visible
+            {"shareId": "legacy", "email": "target@example.com",
+             "createdAt": "2026-04-22T12:00:00+00:00"},
+            # Dual share — public=True + groups -> visible
+            {"shareId": "dual", "email": "target@example.com",
+             "createdAt": "2026-04-22T11:00:00+00:00",
+             "public": True, "groupIds": ["g1"]},
+            # Group-only — must be hidden
+            {"shareId": "group-only", "email": "target@example.com",
+             "createdAt": "2026-04-22T10:00:00+00:00",
+             "public": False, "groupIds": ["g1"]},
+        ],
+        None,
+    )
+
+    response = handler(
+        _event(api_gateway_event, {
+            "email": "me@example.com", "targetEmail": "target@example.com",
+        }),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    ids = {s['shareId'] for s in body['shares']}
+    assert ids == {"legacy", "dual"}

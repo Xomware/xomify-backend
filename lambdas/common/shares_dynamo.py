@@ -14,6 +14,10 @@ Attributes:
 - caption: string, optional, max 140 chars
 - moodTag: string, optional, one of hype|chill|sad|party|focus|discovery
 - genreTags: list[str], optional, max 3
+- groupIds: list[str], optional, groups this share is targeted to
+  (empty / absent == legacy public share)
+- public: bool, whether this share is visible on the friends feed
+  (absent is treated as True by readers for legacy rows)
 - createdAt: ISO8601 UTC timestamp
 - sharedAt: mirror of createdAt (kept for downstream compatibility)
 """
@@ -57,13 +61,20 @@ def create_share(
     caption: Optional[str] = None,
     mood_tag: Optional[str] = None,
     genre_tags: Optional[list[str]] = None,
-) -> dict[str, str]:
-    """Create a share row; returns {shareId, createdAt}."""
+    group_ids: Optional[list[str]] = None,
+    public: bool = True,
+) -> dict[str, Any]:
+    """Create a share row.
+
+    Returns {shareId, createdAt, groupIds, public} so the caller can echo
+    the persisted multi-target state back to the client.
+    """
     try:
         table = dynamodb.Table(SHARES_TABLE_NAME)
 
         share_id = str(uuid4())
         created_at = _iso_now()
+        persisted_group_ids = list(group_ids) if group_ids else []
 
         item: dict[str, Any] = {
             "shareId": share_id,
@@ -76,6 +87,8 @@ def create_share(
             "albumArtUrl": album_art_url,
             "createdAt": created_at,
             "sharedAt": created_at,
+            "groupIds": persisted_group_ids,
+            "public": bool(public),
         }
 
         if caption is not None:
@@ -86,8 +99,16 @@ def create_share(
             item["genreTags"] = genre_tags
 
         table.put_item(Item=item)
-        log.info(f"Share {share_id} created by {email} (track={track_id})")
-        return {"shareId": share_id, "createdAt": created_at}
+        log.info(
+            f"Share {share_id} created by {email} "
+            f"(track={track_id}, groupIds={persisted_group_ids}, public={bool(public)})"
+        )
+        return {
+            "shareId": share_id,
+            "createdAt": created_at,
+            "groupIds": persisted_group_ids,
+            "public": bool(public),
+        }
 
     except Exception as err:
         log.error(f"Create Share failed: {err}")
