@@ -129,6 +129,9 @@ List shares authored by `targetEmail`, newest first.
 **POST** `/shares/react`
 Toggle or set a reaction on a share (see sub-feature #4 for full schema).
 
+**GET** `/shares/detail?email={viewer}&shareId={shareId}`
+Full detail view for a single share. Returns `{ share, interactions, friendRatings }` where `share` is the full share row with viewer-specific enrichment (queuedCount, ratedCount, viewerHasQueued, viewerRating, sharerRating), `interactions` is a deduped list of `(email, action)` events with viewer profiles hydrated, and `friendRatings` is the viewer's accepted friends' ratings (plus the author's rating) for the share's track. Accepts optional `sharedBy` / `sharedAt` for forward compat with iOS payloads — both are ignored server-side.
+
 ### Invites Service (`/invites`)
 
 **POST** `/invites/create`
