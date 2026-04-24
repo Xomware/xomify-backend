@@ -7,11 +7,19 @@ from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
 from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
 from lambdas.common.dynamo_helpers import get_user_table_data
-from lambdas.common.friends_profile_helper import get_user_top_items
+from lambdas.common.friends_profile_helper import get_user_top_items, get_user_public_playlists
 
 log = get_logger(__file__)
 
 HANDLER = 'friends_profile'
+
+
+async def _gather_profile(friend_user: dict) -> dict:
+    """Fetch top items and public playlists concurrently."""
+    top_items_task = get_user_top_items(friend_user)
+    playlists_task = get_user_public_playlists(friend_user)
+    top_items, playlists = await asyncio.gather(top_items_task, playlists_task)
+    return {'top_items': top_items, 'playlists': playlists}
 
 
 @handle_errors(HANDLER)
@@ -25,7 +33,9 @@ def handler(event, context):
     friend_user = get_user_table_data(friend_email)
     log.info(f"Retrieved data for {friend_email}")
 
-    friend_top_items = asyncio.run(get_user_top_items(friend_user))
+    result = asyncio.run(_gather_profile(friend_user))
+    friend_top_items = result['top_items']
+    friend_playlists = result['playlists']
 
     return success_response({
         'displayName': friend_user.get('displayName', None),
@@ -35,4 +45,5 @@ def handler(event, context):
         'topSongs': friend_top_items['tracks'],
         'topArtists': friend_top_items['artists'],
         'topGenres': friend_top_items['genres'],
+        'playlists': friend_playlists,
     })
