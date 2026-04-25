@@ -24,6 +24,8 @@ _TEST_ENV_VARS = {
     "TRACK_RATINGS_TABLE_NAME": "xomify-track-ratings-test",
     "SHARES_TABLE_NAME": "xomify-shares-test",
     "SHARE_INTERACTIONS_TABLE_NAME": "xomify-share-interactions-test",
+    "SHARE_COMMENTS_TABLE_NAME": "xomify-share-comments-test",
+    "SHARE_REACTIONS_TABLE_NAME": "xomify-share-reactions-test",
     "INVITES_TABLE_NAME": "xomify-invites-test",
     "SHARES_EMAIL_INDEX": "email-createdAt-index",
     "INVITE_URL_TEMPLATE": "https://xomify.test/invite/{code}",

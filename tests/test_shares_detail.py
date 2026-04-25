@@ -40,6 +40,8 @@ def _share():
     }
 
 
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')
@@ -53,9 +55,13 @@ def test_shares_detail_happy_path(
     mock_friends,
     mock_ratings,
     mock_batch_users,
+    mock_count_comments,
+    mock_reaction_summary,
     mock_context,
     api_gateway_event,
 ):
+    mock_count_comments.return_value = 0
+    mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
     mock_get_share.return_value = _share()
     mock_enrich.return_value = {
         "queuedCount": 2,
@@ -189,6 +195,8 @@ def test_shares_detail_missing_required_fields_returns_400(
     mock_get_share.assert_not_called()
 
 
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')
@@ -197,9 +205,12 @@ def test_shares_detail_missing_required_fields_returns_400(
 @patch('lambdas.shares_detail.handler.get_share')
 def test_shares_detail_interactions_dedupe_by_email_action(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
     mock_context, api_gateway_event,
 ):
     """Single row with queued=True rated=True -> two events, not one merged."""
+    mock_count_comments.return_value = 0
+    mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
     mock_get_share.return_value = _share()
     mock_enrich.return_value = {}
     mock_reactions.return_value = [
@@ -226,6 +237,8 @@ def test_shares_detail_interactions_dedupe_by_email_action(
     assert len(actions) == 2
 
 
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')
@@ -234,9 +247,12 @@ def test_shares_detail_interactions_dedupe_by_email_action(
 @patch('lambdas.shares_detail.handler.get_share')
 def test_shares_detail_friend_ratings_scoped_to_accepted_friends_only(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
     mock_context, api_gateway_event,
 ):
     """Pending / blocked friends must NOT appear in friendRatings."""
+    mock_count_comments.return_value = 0
+    mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
     mock_get_share.return_value = _share()
     mock_enrich.return_value = {}
     mock_reactions.return_value = []
@@ -286,6 +302,8 @@ def test_shares_detail_group_only_share_blocked_for_non_member(
     mock_member.assert_called_once_with("stranger@example.com", "g1")
 
 
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')
@@ -296,6 +314,7 @@ def test_shares_detail_group_only_share_blocked_for_non_member(
 def test_shares_detail_group_only_share_accessible_to_member(
     mock_get_share, mock_member, mock_enrich, mock_reactions,
     mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
     mock_context, api_gateway_event,
 ):
     """Group members must see group-only shares."""
@@ -309,6 +328,8 @@ def test_shares_detail_group_only_share_accessible_to_member(
     mock_friends.return_value = []
     mock_ratings.return_value = []
     mock_batch_users.return_value = {}
+    mock_count_comments.return_value = 0
+    mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
 
     response = handler(
         _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
@@ -319,6 +340,8 @@ def test_shares_detail_group_only_share_accessible_to_member(
     assert body['share']['shareId'] == 'share-1'
 
 
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')
@@ -329,6 +352,7 @@ def test_shares_detail_group_only_share_accessible_to_member(
 def test_shares_detail_group_only_share_accessible_to_author(
     mock_get_share, mock_member, mock_enrich, mock_reactions,
     mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
     mock_context, api_gateway_event,
 ):
     """Author can always read their own share even if group-only."""
@@ -341,6 +365,8 @@ def test_shares_detail_group_only_share_accessible_to_author(
     mock_friends.return_value = []
     mock_ratings.return_value = []
     mock_batch_users.return_value = {}
+    mock_count_comments.return_value = 0
+    mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
 
     response = handler(
         # viewer == author (share fixture uses alice@example.com)
@@ -352,6 +378,8 @@ def test_shares_detail_group_only_share_accessible_to_author(
     mock_member.assert_not_called()
 
 
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
 @patch('lambdas.shares_detail.handler.batch_get_users')
 @patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
 @patch('lambdas.shares_detail.handler.list_all_friends_for_user')
@@ -360,6 +388,7 @@ def test_shares_detail_group_only_share_accessible_to_author(
 @patch('lambdas.shares_detail.handler.get_share')
 def test_shares_detail_enrichment_failure_is_non_fatal(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
     mock_context, api_gateway_event,
 ):
     """If build_enrichment explodes, the share still comes back with defaults."""
@@ -369,6 +398,8 @@ def test_shares_detail_enrichment_failure_is_non_fatal(
     mock_friends.return_value = []
     mock_ratings.return_value = []
     mock_batch_users.return_value = {}
+    mock_count_comments.return_value = 0
+    mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
 
     response = handler(
         _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
@@ -380,3 +411,77 @@ def test_shares_detail_enrichment_failure_is_non_fatal(
     assert body['share']['shareId'] == 'share-1'
     assert body['share']['queuedCount'] == 0
     assert body['share']['viewerHasQueued'] is False
+
+
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
+@patch('lambdas.shares_detail.handler.batch_get_users')
+@patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
+@patch('lambdas.shares_detail.handler.list_all_friends_for_user')
+@patch('lambdas.shares_detail.handler.list_reactions_for_share')
+@patch('lambdas.shares_detail.handler.build_enrichment')
+@patch('lambdas.shares_detail.handler.get_share')
+def test_shares_detail_includes_comment_and_reaction_enrichment(
+    mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
+    mock_context, api_gateway_event,
+):
+    """commentCount + reactionCounts + viewerReactions land on the share payload."""
+    mock_get_share.return_value = _share()
+    mock_enrich.return_value = {}
+    mock_reactions.return_value = []
+    mock_friends.return_value = []
+    mock_ratings.return_value = []
+    mock_batch_users.return_value = {}
+    mock_count_comments.return_value = 7
+    mock_reaction_summary.return_value = {
+        "counts": {"fire": 3, "heart": 1},
+        "viewerReactions": ["fire"],
+    }
+
+    response = handler(
+        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    share = body['share']
+    assert share['commentCount'] == 7
+    assert share['reactionCounts'] == {"fire": 3, "heart": 1}
+    assert share['viewerReactions'] == ["fire"]
+    mock_count_comments.assert_called_once_with('share-1')
+    mock_reaction_summary.assert_called_once_with('share-1', 'viewer@example.com')
+
+
+@patch('lambdas.shares_detail.handler.build_reaction_summary')
+@patch('lambdas.shares_detail.handler.count_comments')
+@patch('lambdas.shares_detail.handler.batch_get_users')
+@patch('lambdas.shares_detail.handler.list_all_track_ratings_for_user')
+@patch('lambdas.shares_detail.handler.list_all_friends_for_user')
+@patch('lambdas.shares_detail.handler.list_reactions_for_share')
+@patch('lambdas.shares_detail.handler.build_enrichment')
+@patch('lambdas.shares_detail.handler.get_share')
+def test_shares_detail_comment_reaction_failure_is_non_fatal(
+    mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
+    mock_count_comments, mock_reaction_summary,
+    mock_context, api_gateway_event,
+):
+    """If the new comment/reaction helpers explode, defaults still ship."""
+    mock_get_share.return_value = _share()
+    mock_enrich.return_value = {}
+    mock_reactions.return_value = []
+    mock_friends.return_value = []
+    mock_ratings.return_value = []
+    mock_batch_users.return_value = {}
+    mock_count_comments.side_effect = RuntimeError("comments table unreachable")
+    mock_reaction_summary.side_effect = RuntimeError("reactions table unreachable")
+
+    response = handler(
+        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 200
+    share = json.loads(response['body'])['share']
+    assert share['commentCount'] == 0
+    assert share['reactionCounts'] == {}
+    assert share['viewerReactions'] == []
