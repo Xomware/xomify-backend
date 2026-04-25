@@ -53,6 +53,8 @@ from lambdas.common.friendships_dynamo import list_all_friends_for_user
 from lambdas.common.track_ratings_dynamo import list_all_track_ratings_for_user
 from lambdas.common.dynamo_helpers import batch_get_users
 from lambdas.common.group_members_dynamo import is_member_of_group
+from lambdas.common.share_comments_dynamo import count_comments
+from lambdas.common.share_reactions_dynamo import build_reaction_summary
 
 log = get_logger(__file__)
 
@@ -271,10 +273,30 @@ def handler(event, context):
 
     enriched_share = _enrich_share(dict(share), viewer_email)
 
+    # Comments + emoji reactions enrichment — degrade to safe defaults so a
+    # storage hiccup never drops the share payload itself.
+    try:
+        comment_count = count_comments(share_id)
+    except Exception as err:
+        log.warning(f"comment count failed for share {share_id}: {err}")
+        comment_count = 0
+
+    try:
+        reaction_summary = build_reaction_summary(share_id, viewer_email)
+    except Exception as err:
+        log.warning(f"reaction summary failed for share {share_id}: {err}")
+        reaction_summary = {"counts": {}, "viewerReactions": []}
+
+    enriched_share['commentCount'] = comment_count
+    enriched_share['reactionCounts'] = reaction_summary.get('counts', {})
+    enriched_share['viewerReactions'] = reaction_summary.get('viewerReactions', [])
+
     log.info(
         f"Returning detail for share {share_id}: "
         f"{len(interactions_payload)} interactions, "
-        f"{len(friend_ratings_payload)} friendRatings"
+        f"{len(friend_ratings_payload)} friendRatings, "
+        f"{comment_count} comments, "
+        f"{len(reaction_summary.get('counts', {}))} reaction kinds"
     )
 
     return success_response({
