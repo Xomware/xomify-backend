@@ -73,6 +73,77 @@ def api_gateway_event():
     }
 
 
+def _base_api_gateway_event() -> dict:
+    """Internal helper — returns a fresh base event dict (avoids fixture-state sharing)."""
+    return {
+        "httpMethod": "GET",
+        "path": "/test",
+        "queryStringParameters": {},
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": None,
+        "isBase64Encoded": False,
+    }
+
+
+@pytest.fixture
+def authorized_event():
+    """
+    Build an API Gateway event WITH per-user JWT authorizer context populated.
+
+    Mirrors what API Gateway places into `event.requestContext.authorizer`
+    after the (0b) authorizer change. Top-level keys can be overridden via
+    kwargs (e.g. httpMethod, path, body, queryStringParameters).
+    """
+    def _make(
+        email: str = "test@example.com",
+        user_id: str = "spotify123",
+        **overrides,
+    ) -> dict:
+        event = _base_api_gateway_event()
+        event["requestContext"] = {
+            "authorizer": {
+                "email": email,
+                "userId": user_id,
+                "tokenType": "user",
+            }
+        }
+        event.update(overrides)
+        return event
+    return _make
+
+
+@pytest.fixture
+def legacy_event():
+    """
+    Build an API Gateway event WITHOUT authorizer identity context (legacy
+    static-token path). If `email` / `user_id` are provided, they are placed
+    into `queryStringParameters` to mimic the current pre-migration callers.
+    """
+    def _make(
+        email: str | None = None,
+        user_id: str | None = None,
+        **overrides,
+    ) -> dict:
+        event = _base_api_gateway_event()
+        event["requestContext"] = {
+            "authorizer": {
+                "tokenType": "legacy",
+            }
+        }
+        query: dict = {}
+        if email is not None:
+            query["email"] = email
+        if user_id is not None:
+            query["userId"] = user_id
+        if query:
+            event["queryStringParameters"] = query
+        event.update(overrides)
+        return event
+    return _make
+
+
 @pytest.fixture
 def sample_user():
     """Sample user data"""

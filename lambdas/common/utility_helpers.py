@@ -205,18 +205,116 @@ def validate_input(
 def require_fields(data: dict, *fields: str) -> None:
     """
     Raise ValidationError if any required fields are missing.
-    
+
     Usage:
         require_fields(body, 'email', 'userId')
     """
     from lambdas.common.errors import ValidationError
-    
+
     missing = [f for f in fields if f not in data or data[f] is None]
     if missing:
         raise ValidationError(
             message=f"Missing required fields: {', '.join(missing)}",
             field=missing[0]
         )
+
+
+# ============================================
+# Caller Identity Resolution
+# ============================================
+# These helpers exist to bridge the migration window introduced by Track 0
+# of the auth-identity epic. During the window:
+#   * New per-user JWTs populate `requestContext.authorizer.{email,userId}`.
+#   * Legacy static-token clients still send `email`/`userId` in the query
+#     string or body.
+# Once the fallback rate drops below the burn-in threshold (Q5 in the epic
+# plan), Track 1l strips the fallback path entirely.
+
+def _get_header_case_insensitive(event: dict, name: str) -> Optional[str]:
+    """Return a header value from the event, matching the name case-insensitively."""
+    headers = event.get("headers") or {}
+    if not isinstance(headers, dict):
+        return None
+    target = name.lower()
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == target:
+            return value if isinstance(value, str) else None
+    return None
+
+
+def _resolve_caller_identity(event: dict, field: str) -> str:
+    """
+    Resolve a caller-identity field from (in order): authorizer context,
+    query string, then body. Raises MissingCallerIdentityError if absent
+    in all three places.
+
+    Args:
+        event: Lambda event dict (API Gateway shape).
+        field: Either 'email' or 'userId'.
+
+    Returns:
+        The resolved value as a string.
+    """
+    from lambdas.common.errors import MissingCallerIdentityError
+
+    # 1. Trusted: authorizer context (populated by per-user JWTs).
+    request_context = event.get("requestContext") or {}
+    authorizer = request_context.get("authorizer") if isinstance(request_context, dict) else None
+    if isinstance(authorizer, dict):
+        ctx_value = authorizer.get(field)
+        if isinstance(ctx_value, str) and ctx_value:
+            log.debug(f"caller_identity field={field} auth_path=context")
+            return ctx_value
+
+    # 2. Fallback: query string.
+    query_params = get_query_params(event)
+    qs_value = query_params.get(field) if isinstance(query_params, dict) else None
+    if isinstance(qs_value, str) and qs_value:
+        user_agent = _get_header_case_insensitive(event, "User-Agent") or "unknown"
+        log.warning(
+            f"caller_identity field={field} auth_path=fallback source=query user_agent={user_agent}"
+        )
+        return qs_value
+
+    # 3. Fallback: body (only if it parses as JSON dict).
+    body = parse_body(event)
+    body_value = body.get(field) if isinstance(body, dict) else None
+    if isinstance(body_value, str) and body_value:
+        user_agent = _get_header_case_insensitive(event, "User-Agent") or "unknown"
+        log.warning(
+            f"caller_identity field={field} auth_path=fallback source=body user_agent={user_agent}"
+        )
+        return body_value
+
+    # 4. Nothing — structured 401.
+    raise MissingCallerIdentityError(field=field)
+
+
+def get_caller_email(event: dict) -> str:
+    """
+    Resolve the caller's email.
+
+    Trusts `event.requestContext.authorizer.email` first. Falls back to
+    `queryStringParameters.email`, then JSON body `email`, during the Track 0
+    -> Track 1 migration window. Raises `MissingCallerIdentityError` (HTTP 401)
+    if no source provides a value.
+
+    The fallback path emits a WARN log; CloudWatch counts gate the Track 1l
+    cleanup that removes the fallback entirely (epic Q5).
+    """
+    return _resolve_caller_identity(event, "email")
+
+
+def get_caller_user_id(event: dict) -> str:
+    """
+    Resolve the caller's Spotify user id.
+
+    Trusts `event.requestContext.authorizer.userId` first. Falls back to
+    `queryStringParameters.userId`, then JSON body `userId`, during the
+    Track 0 -> Track 1 migration window. Raises `MissingCallerIdentityError`
+    (HTTP 401) if no source provides a value.
+    """
+    return _resolve_caller_identity(event, "userId")
 
 
 # ============================================

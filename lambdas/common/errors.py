@@ -86,7 +86,7 @@ class XomifyError(Exception):
 
 class AuthorizationError(XomifyError):
     """Raised when authorization fails."""
-    
+
     def __init__(self, message: str = "Unauthorized", handler: str = "authorizer", function: str = "unknown"):
         super().__init__(
             message=message,
@@ -94,6 +94,30 @@ class AuthorizationError(XomifyError):
             function=function,
             status=401
         )
+
+
+class MissingCallerIdentityError(AuthorizationError):
+    """
+    Raised when caller identity (email/userId) cannot be resolved from either
+    the authorizer context or the request fallback (query/body).
+
+    Maps to HTTP 401 — the caller is unauthenticated for the purposes of
+    this endpoint because we have no way to know who they are.
+    """
+
+    def __init__(
+        self,
+        field: str,
+        handler: str = "utility_helpers",
+        function: str = "unknown",
+    ):
+        message = f"Missing caller identity: '{field}' not present in authorizer context, query string, or body"
+        super().__init__(
+            message=message,
+            handler=handler,
+            function=function,
+        )
+        self.details = {"field": field}
 
 
 class ValidationError(XomifyError):
