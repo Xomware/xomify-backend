@@ -7,7 +7,12 @@ import aiohttp
 import asyncio
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.group_tracks_dynamo import add_track_to_group
 from lambdas.common.spotify import Spotify
 
@@ -19,9 +24,9 @@ HANDLER = 'groups_add_song_url'
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'groupId', 'spotifyUrl')
+    require_fields(body, 'groupId', 'spotifyUrl')
 
-    email = body.get('email')
+    email = get_caller_email(event)
     group_id = body.get('groupId')
     spotify_url = body.get('spotifyUrl')
 

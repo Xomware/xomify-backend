@@ -4,7 +4,12 @@ POST /groups/add-member - Add a member to group
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.group_members_dynamo import add_group_member
 from lambdas.common.dynamo_helpers import get_user_table_data
 
@@ -16,9 +21,9 @@ HANDLER = 'groups_add_member'
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'groupId', 'memberEmail')
+    require_fields(body, 'groupId', 'memberEmail')
 
-    email = body.get('email')
+    email = get_caller_email(event)
     group_id = body.get('groupId')
     member_email = body.get('memberEmail')
 

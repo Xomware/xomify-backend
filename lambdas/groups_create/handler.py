@@ -5,7 +5,12 @@ POST /groups/create - Create a new group
 import uuid
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.groups_dynamo import create_group
 from lambdas.common.group_members_dynamo import add_group_member
 
@@ -17,9 +22,9 @@ HANDLER = 'groups_create'
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'name')
+    require_fields(body, 'name')
 
-    email = body.get('email')
+    email = get_caller_email(event)
     name = body.get('name')
     description = body.get('description')
     image_url = body.get('imageUrl')

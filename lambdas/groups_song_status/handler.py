@@ -5,7 +5,12 @@ PUT /groups/song-status - Update user's status on a song
 from datetime import datetime, timezone
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.group_tracks_dynamo import mark_track_as_listened
 
 log = get_logger(__file__)
@@ -20,9 +25,9 @@ def _get_timestamp() -> str:
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'groupId', 'songId')
+    require_fields(body, 'groupId', 'songId')
 
-    email = body.get('email')
+    email = get_caller_email(event)
     group_id = body.get('groupId')
     song_id = body.get('songId')  # This is the trackIdTimestamp (SK)
     listened = body.get('listened', False)
