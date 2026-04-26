@@ -2,8 +2,11 @@
 GET /shares/reactions - Per-emoji reaction counts + the viewer's own taps.
 
 Query params:
-    email    (required) - viewer email
     shareId  (required) - parent share
+
+Caller (viewer) email is sourced from `requestContext.authorizer.email`
+via `get_caller_email`; legacy callers may still send `email` in the
+query string during the Track 0 -> Track 1 migration window.
 
 Response:
     {
@@ -20,6 +23,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     get_query_params,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_reactions_dynamo import build_reaction_summary
@@ -33,9 +37,9 @@ HANDLER = "shares_reactions_list"
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, "email", "shareId")
+    require_fields(params, "shareId")
 
-    viewer_email: str = params.get("email")
+    viewer_email: str = get_caller_email(event)
     share_id: str = params.get("shareId")
 
     share = get_share(share_id)

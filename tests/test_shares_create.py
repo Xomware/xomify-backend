@@ -6,6 +6,7 @@ Covers legacy public-only behavior plus the v2 multi-target contract:
 - non-member groupIds rejected (403 AuthorizationError)
 - public=False with empty groupIds rejected (400 ValidationError)
 - dual / group-only persistence paths
+- caller identity migration: helper-sourced email + 401 on missing context
 """
 
 import json
@@ -15,7 +16,6 @@ from lambdas.shares_create.handler import handler
 
 
 VALID_BODY = {
-    "email": "user@example.com",
     "trackId": "spotify:track:1",
     "trackUri": "spotify:track:1",
     "trackName": "Song",
@@ -25,17 +25,17 @@ VALID_BODY = {
 }
 
 
-def _event(api_gateway_event, body):
-    return {
-        **api_gateway_event,
-        "httpMethod": "POST",
-        "path": "/shares/create",
-        "body": json.dumps(body),
-    }
+def _event(authorized_event, body, email="user@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="POST",
+        path="/shares/create",
+        body=json.dumps(body),
+    )
 
 
 @patch('lambdas.shares_create.handler.create_share')
-def test_shares_create_happy_path(mock_create, mock_context, api_gateway_event):
+def test_shares_create_happy_path(mock_create, mock_context, authorized_event):
     mock_create.return_value = {
         "shareId": "abc-123",
         "createdAt": "2026-04-22T12:00:00+00:00",
@@ -43,7 +43,7 @@ def test_shares_create_happy_path(mock_create, mock_context, api_gateway_event):
         "public": True,
     }
 
-    response = handler(_event(api_gateway_event, VALID_BODY), mock_context)
+    response = handler(_event(authorized_event, VALID_BODY), mock_context)
 
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
@@ -55,21 +55,23 @@ def test_shares_create_happy_path(mock_create, mock_context, api_gateway_event):
     kwargs = mock_create.call_args.kwargs
     assert kwargs['group_ids'] == []
     assert kwargs['public'] is True
+    # Caller email comes from authorizer context, not the body.
+    assert kwargs['email'] == "user@example.com"
 
 
 @patch('lambdas.shares_create.handler.create_share')
-def test_shares_create_missing_required_field(mock_create, mock_context, api_gateway_event):
+def test_shares_create_missing_required_field(mock_create, mock_context, authorized_event):
     incomplete = {k: v for k, v in VALID_BODY.items() if k != 'trackId'}
-    response = handler(_event(api_gateway_event, incomplete), mock_context)
+    response = handler(_event(authorized_event, incomplete), mock_context)
 
     assert response['statusCode'] == 400
     mock_create.assert_not_called()
 
 
 @patch('lambdas.shares_create.handler.create_share')
-def test_shares_create_caption_too_long(mock_create, mock_context, api_gateway_event):
+def test_shares_create_caption_too_long(mock_create, mock_context, authorized_event):
     body = {**VALID_BODY, "caption": "a" * 141}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 400
     assert 'caption' in json.loads(response['body'])['error']['message']
@@ -77,9 +79,9 @@ def test_shares_create_caption_too_long(mock_create, mock_context, api_gateway_e
 
 
 @patch('lambdas.shares_create.handler.create_share')
-def test_shares_create_invalid_mood_tag(mock_create, mock_context, api_gateway_event):
+def test_shares_create_invalid_mood_tag(mock_create, mock_context, authorized_event):
     body = {**VALID_BODY, "moodTag": "bogus"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 400
     assert 'moodTag' in json.loads(response['body'])['error']['message']
@@ -87,16 +89,16 @@ def test_shares_create_invalid_mood_tag(mock_create, mock_context, api_gateway_e
 
 
 @patch('lambdas.shares_create.handler.create_share')
-def test_shares_create_too_many_genre_tags(mock_create, mock_context, api_gateway_event):
+def test_shares_create_too_many_genre_tags(mock_create, mock_context, authorized_event):
     body = {**VALID_BODY, "genreTags": ["a", "b", "c", "d"]}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 400
     mock_create.assert_not_called()
 
 
 @patch('lambdas.shares_create.handler.create_share')
-def test_shares_create_valid_optional_fields(mock_create, mock_context, api_gateway_event):
+def test_shares_create_valid_optional_fields(mock_create, mock_context, authorized_event):
     mock_create.return_value = {
         "shareId": "x",
         "createdAt": "2026-04-22T12:00:00+00:00",
@@ -105,7 +107,7 @@ def test_shares_create_valid_optional_fields(mock_create, mock_context, api_gate
     }
     body = {**VALID_BODY, "caption": "nice", "moodTag": "hype", "genreTags": ["pop", "rock"]}
 
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 200
     kwargs = mock_create.call_args.kwargs
@@ -121,7 +123,7 @@ def test_shares_create_valid_optional_fields(mock_create, mock_context, api_gate
 @patch('lambdas.shares_create.handler.is_member_of_group')
 @patch('lambdas.shares_create.handler.create_share')
 def test_shares_create_dual_target_public_and_groups(
-    mock_create, mock_member, mock_context, api_gateway_event
+    mock_create, mock_member, mock_context, authorized_event
 ):
     """public=True with groupIds -> dual share, persisted with both fields."""
     mock_member.return_value = True
@@ -133,7 +135,7 @@ def test_shares_create_dual_target_public_and_groups(
     }
     body = {**VALID_BODY, "groupIds": ["g1", "g2"], "public": True}
 
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 200
     kwargs = mock_create.call_args.kwargs
@@ -147,7 +149,7 @@ def test_shares_create_dual_target_public_and_groups(
 @patch('lambdas.shares_create.handler.is_member_of_group')
 @patch('lambdas.shares_create.handler.create_share')
 def test_shares_create_group_only_share(
-    mock_create, mock_member, mock_context, api_gateway_event
+    mock_create, mock_member, mock_context, authorized_event
 ):
     """public=False with groupIds -> group-only share."""
     mock_member.return_value = True
@@ -159,7 +161,7 @@ def test_shares_create_group_only_share(
     }
     body = {**VALID_BODY, "groupIds": ["g1"], "public": False}
 
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 200
     kwargs = mock_create.call_args.kwargs
@@ -170,13 +172,13 @@ def test_shares_create_group_only_share(
 @patch('lambdas.shares_create.handler.is_member_of_group')
 @patch('lambdas.shares_create.handler.create_share')
 def test_shares_create_rejects_non_member_group(
-    mock_create, mock_member, mock_context, api_gateway_event
+    mock_create, mock_member, mock_context, authorized_event
 ):
     """Caller not a member of the requested group -> 401 AuthorizationError."""
     mock_member.side_effect = lambda email, gid: gid != "g-forbidden"
     body = {**VALID_BODY, "groupIds": ["g1", "g-forbidden"]}
 
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     # AuthorizationError.status == 401 (see lambdas/common/errors.py)
     assert response['statusCode'] == 401
@@ -187,12 +189,12 @@ def test_shares_create_rejects_non_member_group(
 @patch('lambdas.shares_create.handler.is_member_of_group')
 @patch('lambdas.shares_create.handler.create_share')
 def test_shares_create_rejects_private_with_no_targets(
-    mock_create, mock_member, mock_context, api_gateway_event
+    mock_create, mock_member, mock_context, authorized_event
 ):
     """public=False + empty groupIds -> 400."""
     body = {**VALID_BODY, "groupIds": [], "public": False}
 
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 400
     assert 'target' in json.loads(response['body'])['error']['message'].lower()
@@ -204,12 +206,54 @@ def test_shares_create_rejects_private_with_no_targets(
 @patch('lambdas.shares_create.handler.is_member_of_group')
 @patch('lambdas.shares_create.handler.create_share')
 def test_shares_create_group_ids_must_be_list(
-    mock_create, mock_member, mock_context, api_gateway_event
+    mock_create, mock_member, mock_context, authorized_event
 ):
     body = {**VALID_BODY, "groupIds": "g1"}
 
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body), mock_context)
 
     assert response['statusCode'] == 400
     mock_create.assert_not_called()
     mock_member.assert_not_called()
+
+
+# ------------------------------------------------------------
+# Caller-identity migration
+# ------------------------------------------------------------
+
+@patch('lambdas.shares_create.handler.create_share')
+def test_shares_create_missing_caller_identity_returns_401(
+    mock_create, mock_context, api_gateway_event
+):
+    """No authorizer context AND no email in body -> 401 from helper."""
+    event = {
+        **api_gateway_event,
+        "httpMethod": "POST",
+        "path": "/shares/create",
+        "body": json.dumps(VALID_BODY),
+    }
+    response = handler(event, mock_context)
+    assert response['statusCode'] == 401
+    mock_create.assert_not_called()
+
+
+@patch('lambdas.shares_create.handler.create_share')
+def test_shares_create_legacy_email_in_body_still_works(
+    mock_create, mock_context, legacy_event
+):
+    """During the migration window, the helper falls back to body `email`."""
+    mock_create.return_value = {
+        "shareId": "legacy-1",
+        "createdAt": "2026-04-22T12:00:00+00:00",
+        "groupIds": [],
+        "public": True,
+    }
+    body_with_email = {**VALID_BODY, "email": "legacy@example.com"}
+    event = legacy_event(
+        httpMethod="POST",
+        path="/shares/create",
+        body=json.dumps(body_with_email),
+    )
+    response = handler(event, mock_context)
+    assert response['statusCode'] == 200
+    assert mock_create.call_args.kwargs['email'] == "legacy@example.com"

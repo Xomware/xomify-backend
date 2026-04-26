@@ -2,10 +2,13 @@
 GET /shares/comments - Paginated list of comments on a share, newest first.
 
 Query params:
-    email    (required) - viewer email (used for visibility gate)
     shareId  (required) - parent share
     limit    (optional) - page size, default 20, capped at 100
     before   (optional) - ISO8601 createdAt cursor; only items strictly older
+
+Caller (viewer) email is sourced from `requestContext.authorizer.email`
+via `get_caller_email`; legacy callers may still pass `email` in the
+query string during the Track 0 -> Track 1 migration window.
 
 Response:
     {
@@ -29,6 +32,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     get_query_params,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_comments_dynamo import list_comments
@@ -74,9 +78,9 @@ def _parse_limit(raw):
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, "email", "shareId")
+    require_fields(params, "shareId")
 
-    viewer_email: str = params.get("email")
+    viewer_email: str = get_caller_email(event)
     share_id: str = params.get("shareId")
     limit = _parse_limit(params.get("limit"))
     before = params.get("before")

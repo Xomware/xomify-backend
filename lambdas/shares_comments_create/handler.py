@@ -3,10 +3,13 @@ POST /shares/comments - Create a comment on a share.
 
 Body schema:
     {
-        "email":   "viewer@...",
         "shareId": "<uuid>",
         "body":    "comment text (<= 500 chars)"
     }
+
+Caller identity is sourced from `requestContext.authorizer.email` via
+`get_caller_email`; legacy callers may still send `email` in the body
+during the Track 0 -> Track 1 migration window (see auth-identity epic).
 
 Returns the persisted comment row, hydrated with displayName + avatar so
 the iOS client can render it without a follow-up profile fetch.
@@ -24,6 +27,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     parse_body,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_comments_dynamo import create_comment
@@ -39,9 +43,9 @@ BODY_MAX_LEN = 500
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, "email", "shareId", "body")
+    require_fields(body, "shareId", "body")
 
-    email: str = body.get("email")
+    email: str = get_caller_email(event)
     share_id: str = body.get("shareId")
     text: str = body.get("body")
 

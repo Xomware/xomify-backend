@@ -9,26 +9,25 @@ Critical coverage:
 - exactly-once push at the 3rd distinct reactor
 - idempotent under simulated concurrent 3rd-reactor arrivals
 - subsequent (4th, 5th, ...) reactors do NOT re-fire
+- missing caller identity -> 401
 """
 
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from lambdas.shares_react.handler import handler
 
 
 # ---------------------------------------------------------------------- Helpers
-def _event(api_gateway_event, body):
-    return {
-        **api_gateway_event,
-        "httpMethod": "POST",
-        "path": "/shares/react",
-        "body": json.dumps(body),
-    }
+def _event(authorized_event, body, email="bob@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="POST",
+        path="/shares/react",
+        body=json.dumps(body),
+    )
 
 
 def _share(share_id="share-1", author="alice@example.com"):
@@ -63,7 +62,7 @@ def test_shares_react_happy_queue(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_get_share.return_value = _share()
     mock_count.return_value = 1
@@ -75,8 +74,8 @@ def test_shares_react_happy_queue(
         "sharerRating": None,
     }
 
-    body = {"email": "bob@example.com", "shareId": "share-1", "action": "queued"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "action": "queued"}
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
 
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
@@ -107,7 +106,7 @@ def test_shares_react_happy_rate_upserts_canonical(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_get_share.return_value = _share()
     mock_enrich.return_value = {
@@ -119,12 +118,11 @@ def test_shares_react_happy_rate_upserts_canonical(
     }
 
     body = {
-        "email": "bob@example.com",
         "shareId": "share-1",
         "action": "rated",
         "rating": 4.5,
     }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
 
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
@@ -157,7 +155,7 @@ def test_shares_react_toggle_unqueue_clears_only(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_get_share.return_value = _share()
     mock_enrich.return_value = {
@@ -168,8 +166,8 @@ def test_shares_react_toggle_unqueue_clears_only(
         "sharerRating": None,
     }
 
-    body = {"email": "bob@example.com", "shareId": "share-1", "action": "unqueued"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "action": "unqueued"}
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
 
     assert response["statusCode"] == 200
     mock_clear_reaction.assert_called_once_with("share-1", "bob@example.com", "unqueued")
@@ -179,43 +177,43 @@ def test_shares_react_toggle_unqueue_clears_only(
 
 # -------------------------------------------------------------- Validation errors
 @patch("lambdas.shares_react.handler.get_share")
-def test_shares_react_rejects_invalid_action(mock_get_share, mock_context, api_gateway_event):
-    body = {"email": "bob@example.com", "shareId": "share-1", "action": "bogus"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+def test_shares_react_rejects_invalid_action(mock_get_share, mock_context, authorized_event):
+    body = {"shareId": "share-1", "action": "bogus"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_get_share.assert_not_called()
 
 
 @patch("lambdas.shares_react.handler.upsert_track_rating")
 @patch("lambdas.shares_react.handler.get_share")
-def test_shares_react_rated_missing_rating(mock_get_share, mock_upsert, mock_context, api_gateway_event):
+def test_shares_react_rated_missing_rating(mock_get_share, mock_upsert, mock_context, authorized_event):
     mock_get_share.return_value = _share()
-    body = {"email": "bob@example.com", "shareId": "share-1", "action": "rated"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "action": "rated"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
 
 
 @patch("lambdas.shares_react.handler.upsert_track_rating")
 @patch("lambdas.shares_react.handler.get_share")
-def test_shares_react_rated_rating_out_of_range(mock_get_share, mock_upsert, mock_context, api_gateway_event):
+def test_shares_react_rated_rating_out_of_range(mock_get_share, mock_upsert, mock_context, authorized_event):
     mock_get_share.return_value = _share()
-    body = {"email": "bob@example.com", "shareId": "share-1", "action": "rated", "rating": 6}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "action": "rated", "rating": 6}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
 
 
 @patch("lambdas.shares_react.handler.get_share")
-def test_shares_react_share_not_found(mock_get_share, mock_context, api_gateway_event):
+def test_shares_react_share_not_found(mock_get_share, mock_context, authorized_event):
     mock_get_share.return_value = None
-    body = {"email": "bob@example.com", "shareId": "missing", "action": "queued"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "missing", "action": "queued"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 404
 
 
 @patch("lambdas.shares_react.handler.get_share")
-def test_shares_react_missing_required_fields(mock_get_share, mock_context, api_gateway_event):
-    body = {"email": "bob@example.com"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+def test_shares_react_missing_required_fields(mock_get_share, mock_context, authorized_event):
+    body = {}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_get_share.assert_not_called()
 
@@ -237,7 +235,7 @@ def test_shares_react_threshold_fires_once_at_third_reactor(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_get_share.return_value = _share(author="alice@example.com")
     mock_count.return_value = 3
@@ -260,8 +258,8 @@ def test_shares_react_threshold_fires_once_at_third_reactor(
     original = sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME
     sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME = "xomify-notifications-send"
     try:
-        body = {"email": "bob@example.com", "shareId": "share-1", "action": "queued"}
-        response = handler(_event(api_gateway_event, body), mock_context)
+        body = {"shareId": "share-1", "action": "queued"}
+        response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
     finally:
         sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME = original
 
@@ -289,7 +287,7 @@ def test_shares_react_threshold_idempotent_under_concurrency(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     """
     Simulate three reactors hitting the handler simultaneously (all reading
@@ -316,8 +314,8 @@ def test_shares_react_threshold_idempotent_under_concurrency(
     try:
         reactors = ["bob@example.com", "carol@example.com", "dave@example.com"]
         for reactor in reactors:
-            body = {"email": reactor, "shareId": "share-1", "action": "queued"}
-            resp = handler(_event(api_gateway_event, body), mock_context)
+            body = {"shareId": "share-1", "action": "queued"}
+            resp = handler(_event(authorized_event, body, email=reactor), mock_context)
             assert resp["statusCode"] == 200
     finally:
         sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME = original
@@ -345,7 +343,7 @@ def test_shares_react_threshold_does_not_refire_past_third(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_get_share.return_value = _share(author="alice@example.com")
     mock_count.return_value = 5  # well past the threshold
@@ -363,8 +361,8 @@ def test_shares_react_threshold_does_not_refire_past_third(
     original = sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME
     sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME = "xomify-notifications-send"
     try:
-        body = {"email": "eve@example.com", "shareId": "share-1", "action": "queued"}
-        response = handler(_event(api_gateway_event, body), mock_context)
+        body = {"shareId": "share-1", "action": "queued"}
+        response = handler(_event(authorized_event, body, email="eve@example.com"), mock_context)
     finally:
         sr_handler.NOTIFICATIONS_SEND_FUNCTION_NAME = original
 
@@ -387,7 +385,7 @@ def test_shares_react_self_react_does_not_trigger_push(
     mock_enrich,
     mock_lambda,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_get_share.return_value = _share(author="alice@example.com")
     mock_count.return_value = 3
@@ -400,11 +398,27 @@ def test_shares_react_self_react_does_not_trigger_push(
     }
 
     # Author reacts to their own share
-    body = {"email": "alice@example.com", "shareId": "share-1", "action": "queued"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "action": "queued"}
+    response = handler(_event(authorized_event, body, email="alice@example.com"), mock_context)
 
     assert response["statusCode"] == 200
     mock_mark_thresh.assert_not_called()
     mock_lambda.invoke.assert_not_called()
     # count_distinct_reactors must not even be queried in the self-react fast-path
     mock_count.assert_not_called()
+
+
+# ------------------------------------------------------------------ Auth
+@patch("lambdas.shares_react.handler.get_share")
+def test_shares_react_missing_caller_identity_returns_401(
+    mock_get_share, mock_context, api_gateway_event
+):
+    event = {
+        **api_gateway_event,
+        "httpMethod": "POST",
+        "path": "/shares/react",
+        "body": json.dumps({"shareId": "share-1", "action": "queued"}),
+    }
+    response = handler(event, mock_context)
+    assert response["statusCode"] == 401
+    mock_get_share.assert_not_called()

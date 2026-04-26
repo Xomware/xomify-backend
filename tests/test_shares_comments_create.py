@@ -7,6 +7,7 @@ Covers:
 - missing required fields -> 400
 - missing share -> 404
 - group-only share, viewer not a member -> 404
+- missing caller identity -> 401
 """
 
 from __future__ import annotations
@@ -17,13 +18,14 @@ from unittest.mock import patch
 from lambdas.shares_comments_create.handler import handler
 
 
-def _event(api_gateway_event, body):
-    return {
-        **api_gateway_event,
-        "httpMethod": "POST",
-        "path": "/shares/comments",
-        "body": json.dumps(body),
-    }
+def _event(authorized_event, body, email="bob@example.com"):
+    """Build an authorized event with the given JSON body."""
+    return authorized_event(
+        email=email,
+        httpMethod="POST",
+        path="/shares/comments",
+        body=json.dumps(body),
+    )
 
 
 def _share(share_id="share-1", author="alice@example.com", public=True, group_ids=None):
@@ -42,7 +44,7 @@ def _share(share_id="share-1", author="alice@example.com", public=True, group_id
 @patch("lambdas.shares_comments_create.handler.create_comment")
 @patch("lambdas.shares_comments_create.handler.get_share")
 def test_happy_path(
-    mock_get_share, mock_create, mock_users, mock_context, api_gateway_event
+    mock_get_share, mock_create, mock_users, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_create.return_value = {
@@ -61,8 +63,8 @@ def test_happy_path(
         }
     }
 
-    body = {"email": "bob@example.com", "shareId": "share-1", "body": "fire track"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "body": "fire track"}
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
 
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
@@ -80,10 +82,10 @@ def test_happy_path(
 @patch("lambdas.shares_comments_create.handler.create_comment")
 @patch("lambdas.shares_comments_create.handler.get_share")
 def test_missing_required_fields(
-    mock_get_share, mock_create, mock_context, api_gateway_event
+    mock_get_share, mock_create, mock_context, authorized_event
 ):
-    body = {"email": "bob@example.com", "shareId": "share-1"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_get_share.assert_not_called()
     mock_create.assert_not_called()
@@ -92,10 +94,10 @@ def test_missing_required_fields(
 @patch("lambdas.shares_comments_create.handler.create_comment")
 @patch("lambdas.shares_comments_create.handler.get_share")
 def test_empty_body_rejected(
-    mock_get_share, mock_create, mock_context, api_gateway_event
+    mock_get_share, mock_create, mock_context, authorized_event
 ):
-    body = {"email": "bob@example.com", "shareId": "share-1", "body": "   "}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "body": "   "}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_create.assert_not_called()
 
@@ -103,14 +105,10 @@ def test_empty_body_rejected(
 @patch("lambdas.shares_comments_create.handler.create_comment")
 @patch("lambdas.shares_comments_create.handler.get_share")
 def test_body_too_long_rejected(
-    mock_get_share, mock_create, mock_context, api_gateway_event
+    mock_get_share, mock_create, mock_context, authorized_event
 ):
-    body = {
-        "email": "bob@example.com",
-        "shareId": "share-1",
-        "body": "a" * 501,
-    }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "body": "a" * 501}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_create.assert_not_called()
 
@@ -119,11 +117,11 @@ def test_body_too_long_rejected(
 @patch("lambdas.shares_comments_create.handler.create_comment")
 @patch("lambdas.shares_comments_create.handler.get_share")
 def test_share_not_found(
-    mock_get_share, mock_create, mock_context, api_gateway_event
+    mock_get_share, mock_create, mock_context, authorized_event
 ):
     mock_get_share.return_value = None
-    body = {"email": "bob@example.com", "shareId": "missing", "body": "hi"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "missing", "body": "hi"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 404
     mock_create.assert_not_called()
 
@@ -132,17 +130,70 @@ def test_share_not_found(
 @patch("lambdas.shares_comments_create.handler.create_comment")
 @patch("lambdas.shares_comments_create.handler.get_share")
 def test_group_only_share_blocks_non_member(
-    mock_get_share, mock_create, mock_member, mock_context, api_gateway_event
+    mock_get_share, mock_create, mock_member, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share(public=False, group_ids=["g1"])
     mock_member.return_value = False
 
-    body = {
-        "email": "stranger@example.com",
-        "shareId": "share-1",
-        "body": "hi",
-    }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "body": "hi"}
+    response = handler(
+        _event(authorized_event, body, email="stranger@example.com"), mock_context
+    )
     # Existence is hidden -> 404, not 403.
     assert response["statusCode"] == 404
     mock_create.assert_not_called()
+
+
+# ------------------------------------------------------------------ Auth
+@patch("lambdas.shares_comments_create.handler.create_comment")
+@patch("lambdas.shares_comments_create.handler.get_share")
+def test_missing_caller_identity_returns_401(
+    mock_get_share, mock_create, mock_context, api_gateway_event
+):
+    """No authorizer context AND no email in body -> 401 from helper."""
+    event = {
+        **api_gateway_event,
+        "httpMethod": "POST",
+        "path": "/shares/comments",
+        "body": json.dumps({"shareId": "share-1", "body": "fire"}),
+    }
+    response = handler(event, mock_context)
+    assert response["statusCode"] == 401
+    mock_get_share.assert_not_called()
+    mock_create.assert_not_called()
+
+
+# ------------------------------------------------------------------ Legacy fallback
+@patch("lambdas.shares_comments_create.handler.batch_get_users")
+@patch("lambdas.shares_comments_create.handler.create_comment")
+@patch("lambdas.shares_comments_create.handler.get_share")
+def test_legacy_email_in_body_still_works(
+    mock_get_share, mock_create, mock_users, mock_context, legacy_event
+):
+    """During the migration window, callers without authorizer context can
+    still pass `email` in the body. Helper logs a WARN; handler proceeds."""
+    mock_get_share.return_value = _share()
+    mock_create.return_value = {
+        "shareId": "share-1",
+        "commentId": "c-1",
+        "email": "bob@example.com",
+        "body": "fire",
+        "createdAt": "2026-04-23T12:00:00+00:00",
+        "createdAtId": "2026-04-23T12:00:00+00:00#c-1",
+    }
+    mock_users.return_value = {}
+
+    event = legacy_event(
+        httpMethod="POST",
+        path="/shares/comments",
+        body=json.dumps({
+            "email": "bob@example.com",
+            "shareId": "share-1",
+            "body": "fire",
+        }),
+    )
+    response = handler(event, mock_context)
+    assert response["statusCode"] == 200
+    mock_create.assert_called_once_with(
+        share_id="share-1", email="bob@example.com", body="fire"
+    )

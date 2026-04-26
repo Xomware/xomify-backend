@@ -8,6 +8,7 @@ Covers:
 - missing share -> 404
 - missing comment -> 404
 - missing required fields -> 400
+- missing caller identity -> 401
 """
 
 from __future__ import annotations
@@ -18,13 +19,13 @@ from unittest.mock import patch
 from lambdas.shares_comments_delete.handler import handler
 
 
-def _event(api_gateway_event, body):
-    return {
-        **api_gateway_event,
-        "httpMethod": "DELETE",
-        "path": "/shares/comments",
-        "body": json.dumps(body),
-    }
+def _event(authorized_event, body, email="bob@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="DELETE",
+        path="/shares/comments",
+        body=json.dumps(body),
+    )
 
 
 def _share():
@@ -49,17 +50,15 @@ def _comment(author="bob@example.com"):
 @patch("lambdas.shares_comments_delete.handler.get_comment")
 @patch("lambdas.shares_comments_delete.handler.get_share")
 def test_comment_author_can_delete(
-    mock_get_share, mock_get_comment, mock_delete, mock_context, api_gateway_event
+    mock_get_share, mock_get_comment, mock_delete, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_get_comment.return_value = _comment()
 
-    body = {
-        "email": "bob@example.com",  # comment author
-        "shareId": "share-1",
-        "commentId": "c-1",
-    }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "commentId": "c-1"}
+    response = handler(
+        _event(authorized_event, body, email="bob@example.com"), mock_context
+    )
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
     assert payload["deleted"] is True
@@ -71,17 +70,15 @@ def test_comment_author_can_delete(
 @patch("lambdas.shares_comments_delete.handler.get_comment")
 @patch("lambdas.shares_comments_delete.handler.get_share")
 def test_share_author_can_delete(
-    mock_get_share, mock_get_comment, mock_delete, mock_context, api_gateway_event
+    mock_get_share, mock_get_comment, mock_delete, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_get_comment.return_value = _comment()
 
-    body = {
-        "email": "alice@example.com",  # share author
-        "shareId": "share-1",
-        "commentId": "c-1",
-    }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "commentId": "c-1"}
+    response = handler(
+        _event(authorized_event, body, email="alice@example.com"), mock_context
+    )
     assert response["statusCode"] == 200
     mock_delete.assert_called_once()
 
@@ -90,17 +87,15 @@ def test_share_author_can_delete(
 @patch("lambdas.shares_comments_delete.handler.get_comment")
 @patch("lambdas.shares_comments_delete.handler.get_share")
 def test_third_party_forbidden(
-    mock_get_share, mock_get_comment, mock_delete, mock_context, api_gateway_event
+    mock_get_share, mock_get_comment, mock_delete, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_get_comment.return_value = _comment()
 
-    body = {
-        "email": "stranger@example.com",
-        "shareId": "share-1",
-        "commentId": "c-1",
-    }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "commentId": "c-1"}
+    response = handler(
+        _event(authorized_event, body, email="stranger@example.com"), mock_context
+    )
     # AuthorizationError -> 401 in this codebase.
     assert response["statusCode"] == 401
     mock_delete.assert_not_called()
@@ -110,11 +105,11 @@ def test_third_party_forbidden(
 @patch("lambdas.shares_comments_delete.handler.get_comment")
 @patch("lambdas.shares_comments_delete.handler.get_share")
 def test_missing_share(
-    mock_get_share, mock_get_comment, mock_delete, mock_context, api_gateway_event
+    mock_get_share, mock_get_comment, mock_delete, mock_context, authorized_event
 ):
     mock_get_share.return_value = None
-    body = {"email": "bob@example.com", "shareId": "missing", "commentId": "c-1"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "missing", "commentId": "c-1"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 404
     mock_get_comment.assert_not_called()
     mock_delete.assert_not_called()
@@ -124,12 +119,12 @@ def test_missing_share(
 @patch("lambdas.shares_comments_delete.handler.get_comment")
 @patch("lambdas.shares_comments_delete.handler.get_share")
 def test_missing_comment(
-    mock_get_share, mock_get_comment, mock_delete, mock_context, api_gateway_event
+    mock_get_share, mock_get_comment, mock_delete, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_get_comment.return_value = None
-    body = {"email": "bob@example.com", "shareId": "share-1", "commentId": "missing"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "commentId": "missing"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 404
     mock_delete.assert_not_called()
 
@@ -138,11 +133,31 @@ def test_missing_comment(
 @patch("lambdas.shares_comments_delete.handler.get_comment")
 @patch("lambdas.shares_comments_delete.handler.get_share")
 def test_missing_required_fields(
+    mock_get_share, mock_get_comment, mock_delete, mock_context, authorized_event
+):
+    body = {}
+    response = handler(_event(authorized_event, body), mock_context)
+    assert response["statusCode"] == 400
+    mock_get_share.assert_not_called()
+    mock_get_comment.assert_not_called()
+    mock_delete.assert_not_called()
+
+
+# ------------------------------------------------------------------ Auth
+@patch("lambdas.shares_comments_delete.handler.delete_comment")
+@patch("lambdas.shares_comments_delete.handler.get_comment")
+@patch("lambdas.shares_comments_delete.handler.get_share")
+def test_missing_caller_identity_returns_401(
     mock_get_share, mock_get_comment, mock_delete, mock_context, api_gateway_event
 ):
-    body = {"email": "bob@example.com"}
-    response = handler(_event(api_gateway_event, body), mock_context)
-    assert response["statusCode"] == 400
+    event = {
+        **api_gateway_event,
+        "httpMethod": "DELETE",
+        "path": "/shares/comments",
+        "body": json.dumps({"shareId": "share-1", "commentId": "c-1"}),
+    }
+    response = handler(event, mock_context)
+    assert response["statusCode"] == 401
     mock_get_share.assert_not_called()
     mock_get_comment.assert_not_called()
     mock_delete.assert_not_called()

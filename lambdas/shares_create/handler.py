@@ -13,7 +13,12 @@ Multi-target semantics (v2):
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError, AuthorizationError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.shares_dynamo import create_share
 from lambdas.common.group_members_dynamo import is_member_of_group
 
@@ -88,7 +93,6 @@ def handler(event, context):
     body = parse_body(event)
     require_fields(
         body,
-        'email',
         'trackId',
         'trackUri',
         'trackName',
@@ -97,7 +101,7 @@ def handler(event, context):
         'albumArtUrl',
     )
 
-    email = body.get('email')
+    email = get_caller_email(event)
     track_id = body.get('trackId')
     track_uri = body.get('trackUri')
     track_name = body.get('trackName')
