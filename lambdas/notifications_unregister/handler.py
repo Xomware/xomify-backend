@@ -1,18 +1,27 @@
 """
-POST /notifications/unregister - Remove an APNs device token for a user.
+POST /notifications/unregister - Remove an APNs device token for the caller.
+
+Caller identity (`email`) is sourced from the JWT-authorizer context via
+`get_caller_email`. The body only carries the target device token to remove.
 
 Body:
     {
-        "email": "user@...",
         "deviceToken": "<hex>"
     }
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    get_caller_email,
+    parse_body,
+    require_fields,
+    success_response,
+)
 from lambdas.common.device_tokens_dynamo import delete_token
 
 log = get_logger(__file__)
@@ -21,11 +30,11 @@ HANDLER = "notifications_unregister"
 
 
 @handle_errors(HANDLER)
-def handler(event, context):
+def handler(event: dict, context: Any) -> dict:
     body = parse_body(event)
-    require_fields(body, "email", "deviceToken")
+    require_fields(body, "deviceToken")
 
-    email = body.get("email")
+    email = get_caller_email(event)
     device_token = body.get("deviceToken")
 
     if not isinstance(device_token, str) or not device_token:
