@@ -17,6 +17,17 @@ def _event(api_gateway_event, params):
     }
 
 
+def _body_event(api_gateway_event, body):
+    """Mirror iOS: POST/DELETE with JSON body, no query string."""
+    return {
+        **api_gateway_event,
+        "httpMethod": "POST",
+        "path": "/shares/delete",
+        "queryStringParameters": None,
+        "body": json.dumps(body),
+    }
+
+
 @patch('lambdas.shares_delete.handler.delete_share')
 @patch('lambdas.shares_delete.handler.get_share')
 def test_shares_delete_owner_success(
@@ -76,3 +87,43 @@ def test_shares_delete_missing_fields(mock_get, mock_context, api_gateway_event)
     )
     assert response['statusCode'] == 400
     mock_get.assert_not_called()
+
+
+# Bug regression: iOS POSTs `{email, shareId, sharedAt}` in the JSON body,
+# not the query string. The previous handler only read query params, so
+# the request silently failed validation (or — depending on API Gateway
+# routing — ran with empty identifiers and never actually deleted the
+# row). The handler now reads body OR query params.
+@patch('lambdas.shares_delete.handler.delete_share')
+@patch('lambdas.shares_delete.handler.get_share')
+def test_shares_delete_accepts_body_payload(
+    mock_get, mock_delete, mock_context, api_gateway_event
+):
+    mock_get.return_value = {"shareId": "s1", "email": "owner@example.com"}
+    mock_delete.return_value = True
+
+    response = handler(
+        _body_event(api_gateway_event, {
+            "email": "owner@example.com",
+            "shareId": "s1",
+            "sharedAt": "2026-04-23T12:00:00+00:00",
+        }),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 204
+    mock_delete.assert_called_once_with("s1")
+
+
+@patch('lambdas.shares_delete.handler.delete_share')
+@patch('lambdas.shares_delete.handler.get_share')
+def test_shares_delete_body_missing_share_id(
+    mock_get, mock_delete, mock_context, api_gateway_event
+):
+    response = handler(
+        _body_event(api_gateway_event, {"email": "owner@example.com"}),
+        mock_context,
+    )
+    assert response['statusCode'] == 400
+    mock_get.assert_not_called()
+    mock_delete.assert_not_called()

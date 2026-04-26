@@ -212,6 +212,41 @@ def list_shares_for_user(
 
 
 # ============================================
+# Count Shares For User
+# ============================================
+def count_shares_for_user(email: str) -> int:
+    """Return total share count for an author via the email-createdAt GSI.
+
+    Uses Select=COUNT so the query is billed per kb scanned (not per item
+    returned). This is the cheapest way to source `shareCount` for the
+    `/friends/profile` header — see `docs/ios-profile-redesign-contract.md`.
+    """
+    try:
+        table = dynamodb.Table(SHARES_TABLE_NAME)
+        total = 0
+        kwargs: dict[str, Any] = {
+            "IndexName": SHARES_EMAIL_INDEX,
+            "KeyConditionExpression": Key("email").eq(email),
+            "Select": "COUNT",
+        }
+        while True:
+            response = table.query(**kwargs)
+            total += int(response.get("Count", 0))
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            kwargs["ExclusiveStartKey"] = last_key
+        return total
+    except Exception as err:
+        log.error(f"Count Shares For User failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="count_shares_for_user",
+            table=SHARES_TABLE_NAME,
+        )
+
+
+# ============================================
 # Fan-out Feed Query
 # ============================================
 def query_feed_for_emails(

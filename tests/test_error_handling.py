@@ -126,6 +126,51 @@ def test_custom_mask_value():
     assert masked["password"] == "[REDACTED]"
 
 
+# --------------------------------------------------------------------
+# Empty-message regression
+# --------------------------------------------------------------------
+# Bug repro: shares_comments_create / shares_reactions_toggle returned
+# 500 with `{"error": {"message": ""}}` from TestFlight. The trigger is
+# any code path that does `raise Exception()` (or that surfaces a
+# botocore exception whose `str(e)` is empty during cold start). The
+# decorator wrapped that as XomifyError(message=""), which serialized
+# to an empty-string message and gave the iOS client nothing to display.
+#
+# The fix guards both layers: XomifyError.__init__ falls back to a stable
+# placeholder, and the decorator falls back to repr/class name before
+# constructing the wrapper error.
+
+def test_xomify_error_blank_message_falls_back():
+    """Empty / whitespace-only messages should never reach the wire."""
+    err = XomifyError(message="")
+    assert err.message == "unknown error"
+    assert err.to_dict()["error"]["message"] == "unknown error"
+
+    err_ws = XomifyError(message="   ")
+    assert err_ws.message == "unknown error"
+
+
+def test_handle_errors_with_bare_exception_returns_actionable_message(
+    mock_context, api_gateway_event
+):
+    """A bare `raise Exception()` must not produce `{"message": ""}`."""
+
+    @handle_errors("test_handler", log_context=False)
+    def failing_handler(event, context):
+        # `str(Exception())` is "" — this is the exact production trigger.
+        raise Exception()
+
+    response = failing_handler(api_gateway_event, mock_context)
+
+    assert response['statusCode'] == 500
+    body = json.loads(response['body'])
+    # Must be non-empty and identify the failure class so iOS can render
+    # something better than a blank toast.
+    assert body['error']['message']
+    assert body['error']['message'] != ""
+    assert "Exception" in body['error']['message'] or body['error']['message'] == "unknown error"
+
+
 def test_case_insensitive_token_masking():
     """Test that fields containing 'token' are masked regardless of case"""
     data = {

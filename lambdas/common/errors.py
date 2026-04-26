@@ -31,14 +31,18 @@ class XomifyError(Exception):
     """
     
     def __init__(
-        self, 
-        message: str, 
+        self,
+        message: str,
         handler: str = "unknown",
-        function: str = "unknown", 
+        function: str = "unknown",
         status: int = 500,
         details: Optional[dict] = None
     ):
-        self.message = message
+        # Guard against empty messages — `str(err)` for some boto3 / generic
+        # exceptions returns "", which produces an unhelpful
+        # `{"error": {"message": ""}}` response. Fall back to a stable
+        # placeholder so the client always has something to surface.
+        self.message = message if (isinstance(message, str) and message.strip()) else "unknown error"
         self.handler = handler
         self.function = function
         self.status = status
@@ -400,8 +404,14 @@ def handle_errors(handler_name: str, log_context: bool = True):
                 if log_context:
                     log_error_context(handler_name, func.__name__, event, context)
 
+                # Some exceptions (e.g. bare `Exception()`, certain botocore
+                # connection errors during cold-start) stringify to "" — that
+                # produces a useless `{"error": {"message": ""}}` response.
+                # Fall back to repr / class name so the client always sees
+                # something actionable instead of an empty string.
+                raw_message = str(e) or repr(e) or e.__class__.__name__
                 error = XomifyError(
-                    message=str(e),
+                    message=raw_message,
                     handler=handler_name,
                     function=func.__name__,
                     status=500
