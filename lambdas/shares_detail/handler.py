@@ -2,13 +2,15 @@
 GET /shares/detail - Full detail view for a single share.
 
 Query params:
-    email    (required) - viewer email (used for viewer-specific enrichment +
-                           scoping friendRatings to the viewer's friends)
     shareId  (required) - the share to load
     sharedAt (optional) - accepted for forward compat; unused, since the
                            shares table is keyed on shareId alone in v1
     sharedBy (optional) - accepted for forward compat; unused, since the
                            share row itself carries the author email
+
+Caller (viewer) email is sourced from `requestContext.authorizer.email`
+via `get_caller_email`; legacy callers may still pass `email` in the
+query string during the Track 0 -> Track 1 migration window.
 
 Response:
     {
@@ -43,6 +45,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     get_query_params,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.interactions_dynamo import (
@@ -192,9 +195,9 @@ def _enrich_share(share: dict[str, Any], viewer_email: str) -> dict[str, Any]:
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, 'email', 'shareId')
+    require_fields(params, 'shareId')
 
-    viewer_email = params.get('email')
+    viewer_email = get_caller_email(event)
     share_id = params.get('shareId')
     # Accepted for forward compat with iOS payloads; not required because
     # the shares table is keyed on shareId alone and the row carries the

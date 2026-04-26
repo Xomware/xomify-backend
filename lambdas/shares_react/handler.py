@@ -3,11 +3,14 @@ POST /shares/react - React to a share.
 
 Body schema:
     {
-        "email":   "viewer@...",
         "shareId": "<uuid>",
         "action":  "queued" | "rated" | "unqueued" | "unrated",
         "rating":  1.0-5.0 (required when action == "rated")
     }
+
+Caller (viewer) email is sourced from `requestContext.authorizer.email`
+via `get_caller_email`; legacy callers may still send `email` in the
+body during the Track 0 -> Track 1 migration window.
 
 Flow:
     1. Validate body + look up parent share
@@ -28,7 +31,12 @@ import boto3
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, NotFoundError, ValidationError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.constants import NOTIFICATIONS_SEND_FUNCTION_NAME
 from lambdas.common.interactions_dynamo import (
     VALID_ACTIONS,
@@ -111,9 +119,9 @@ def _invoke_threshold_push(
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, "email", "shareId", "action")
+    require_fields(body, "shareId", "action")
 
-    email = body.get("email")
+    email = get_caller_email(event)
     share_id = body.get("shareId")
     action = body.get("action")
     raw_rating = body.get("rating")

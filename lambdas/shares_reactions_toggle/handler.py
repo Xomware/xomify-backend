@@ -3,10 +3,13 @@ POST /shares/reactions - Toggle an emoji reaction on a share.
 
 Body schema:
     {
-        "email":    "viewer@...",
         "shareId":  "<uuid>",
         "reaction": "fire" | "heart" | "laugh" | "mind_blown" | "sad" | "thumbs_up"
     }
+
+Caller (viewer) email is sourced from `requestContext.authorizer.email`
+via `get_caller_email`; legacy callers may still send `email` in the
+body during the Track 0 -> Track 1 migration window.
 
 Behavior:
 - If the (user, share, reaction) row exists -> delete it, return active=false.
@@ -39,6 +42,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     parse_body,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_reactions_dynamo import (
@@ -58,9 +62,9 @@ HANDLER = "shares_reactions_toggle"
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, "email", "shareId", "reaction")
+    require_fields(body, "shareId", "reaction")
 
-    email: str = body.get("email")
+    email: str = get_caller_email(event)
     share_id: str = body.get("shareId")
     reaction = body.get("reaction")
 

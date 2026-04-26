@@ -8,6 +8,7 @@ Covers:
 - interactions dedupe on (email, action)
 - friendRatings filtered to the viewer's accepted friends + the author
 - enrichment failures do not drop the share
+- missing caller identity -> 401
 """
 
 from unittest.mock import patch
@@ -16,13 +17,13 @@ import json
 from lambdas.shares_detail.handler import handler
 
 
-def _event(api_gateway_event, params):
-    return {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/shares/detail",
-        "queryStringParameters": params,
-    }
+def _event(authorized_event, params, email="viewer@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="GET",
+        path="/shares/detail",
+        queryStringParameters=params,
+    )
 
 
 def _share():
@@ -58,7 +59,7 @@ def test_shares_detail_happy_path(
     mock_count_comments,
     mock_reaction_summary,
     mock_context,
-    api_gateway_event,
+    authorized_event,
 ):
     mock_count_comments.return_value = 0
     mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
@@ -129,7 +130,7 @@ def test_shares_detail_happy_path(
     }
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}, email="viewer@example.com"),
         mock_context,
     )
 
@@ -176,11 +177,11 @@ def test_shares_detail_happy_path(
 
 @patch('lambdas.shares_detail.handler.get_share')
 def test_shares_detail_missing_share_returns_404(
-    mock_get_share, mock_context, api_gateway_event
+    mock_get_share, mock_context, authorized_event
 ):
     mock_get_share.return_value = None
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "missing"}),
+        _event(authorized_event, {"shareId": "missing"}),
         mock_context,
     )
     assert response['statusCode'] == 404
@@ -188,9 +189,9 @@ def test_shares_detail_missing_share_returns_404(
 
 @patch('lambdas.shares_detail.handler.get_share')
 def test_shares_detail_missing_required_fields_returns_400(
-    mock_get_share, mock_context, api_gateway_event
+    mock_get_share, mock_context, authorized_event
 ):
-    response = handler(_event(api_gateway_event, {"email": "viewer@example.com"}), mock_context)
+    response = handler(_event(authorized_event, {}), mock_context)
     assert response['statusCode'] == 400
     mock_get_share.assert_not_called()
 
@@ -206,7 +207,7 @@ def test_shares_detail_missing_required_fields_returns_400(
 def test_shares_detail_interactions_dedupe_by_email_action(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """Single row with queued=True rated=True -> two events, not one merged."""
     mock_count_comments.return_value = 0
@@ -226,7 +227,7 @@ def test_shares_detail_interactions_dedupe_by_email_action(
     mock_batch_users.return_value = {}
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
     body = json.loads(response['body'])
@@ -248,7 +249,7 @@ def test_shares_detail_interactions_dedupe_by_email_action(
 def test_shares_detail_friend_ratings_scoped_to_accepted_friends_only(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """Pending / blocked friends must NOT appear in friendRatings."""
     mock_count_comments.return_value = 0
@@ -269,7 +270,7 @@ def test_shares_detail_friend_ratings_scoped_to_accepted_friends_only(
     mock_batch_users.return_value = {}
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
     body = json.loads(response['body'])
@@ -285,7 +286,7 @@ def test_shares_detail_friend_ratings_scoped_to_accepted_friends_only(
 @patch('lambdas.shares_detail.handler.is_member_of_group')
 @patch('lambdas.shares_detail.handler.get_share')
 def test_shares_detail_group_only_share_blocked_for_non_member(
-    mock_get_share, mock_member, mock_context, api_gateway_event,
+    mock_get_share, mock_member, mock_context, authorized_event,
 ):
     """Group-only share (public=False) must 404 for a non-member viewer."""
     share = _share()
@@ -295,7 +296,7 @@ def test_shares_detail_group_only_share_blocked_for_non_member(
     mock_member.return_value = False
 
     response = handler(
-        _event(api_gateway_event, {"email": "stranger@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}, email="stranger@example.com"),
         mock_context,
     )
     assert response['statusCode'] == 404
@@ -315,7 +316,7 @@ def test_shares_detail_group_only_share_accessible_to_member(
     mock_get_share, mock_member, mock_enrich, mock_reactions,
     mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """Group members must see group-only shares."""
     share = _share()
@@ -332,7 +333,7 @@ def test_shares_detail_group_only_share_accessible_to_member(
     mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
     assert response['statusCode'] == 200
@@ -353,7 +354,7 @@ def test_shares_detail_group_only_share_accessible_to_author(
     mock_get_share, mock_member, mock_enrich, mock_reactions,
     mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """Author can always read their own share even if group-only."""
     share = _share()
@@ -370,7 +371,7 @@ def test_shares_detail_group_only_share_accessible_to_author(
 
     response = handler(
         # viewer == author (share fixture uses alice@example.com)
-        _event(api_gateway_event, {"email": "alice@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}, email="alice@example.com"),
         mock_context,
     )
     assert response['statusCode'] == 200
@@ -389,7 +390,7 @@ def test_shares_detail_group_only_share_accessible_to_author(
 def test_shares_detail_enrichment_failure_is_non_fatal(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """If build_enrichment explodes, the share still comes back with defaults."""
     mock_get_share.return_value = _share()
@@ -402,7 +403,7 @@ def test_shares_detail_enrichment_failure_is_non_fatal(
     mock_reaction_summary.return_value = {"counts": {}, "viewerReactions": []}
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
 
@@ -424,7 +425,7 @@ def test_shares_detail_enrichment_failure_is_non_fatal(
 def test_shares_detail_includes_comment_and_reaction_enrichment(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """commentCount + reactionCounts + viewerReactions land on the share payload."""
     mock_get_share.return_value = _share()
@@ -440,7 +441,7 @@ def test_shares_detail_includes_comment_and_reaction_enrichment(
     }
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
     assert response['statusCode'] == 200
@@ -464,7 +465,7 @@ def test_shares_detail_includes_comment_and_reaction_enrichment(
 def test_shares_detail_comment_reaction_failure_is_non_fatal(
     mock_get_share, mock_enrich, mock_reactions, mock_friends, mock_ratings, mock_batch_users,
     mock_count_comments, mock_reaction_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """If the new comment/reaction helpers explode, defaults still ship."""
     mock_get_share.return_value = _share()
@@ -477,7 +478,7 @@ def test_shares_detail_comment_reaction_failure_is_non_fatal(
     mock_reaction_summary.side_effect = RuntimeError("reactions table unreachable")
 
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com", "shareId": "share-1"}),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
     assert response['statusCode'] == 200
@@ -485,3 +486,19 @@ def test_shares_detail_comment_reaction_failure_is_non_fatal(
     assert share['commentCount'] == 0
     assert share['reactionCounts'] == {}
     assert share['viewerReactions'] == []
+
+
+# ------------------------------------------------------------------ Auth
+@patch('lambdas.shares_detail.handler.get_share')
+def test_shares_detail_missing_caller_identity_returns_401(
+    mock_get_share, mock_context, api_gateway_event
+):
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/shares/detail",
+        "queryStringParameters": {"shareId": "share-1"},
+    }
+    response = handler(event, mock_context)
+    assert response['statusCode'] == 401
+    mock_get_share.assert_not_called()

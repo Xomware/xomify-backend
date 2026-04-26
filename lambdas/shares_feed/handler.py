@@ -14,7 +14,11 @@ Visibility rules (v2):
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError
-from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    get_query_params,
+    get_caller_email,
+)
 from lambdas.common.friendships_dynamo import list_all_friends_for_user
 from lambdas.common.group_members_dynamo import list_members_of_group
 from lambdas.common.shares_dynamo import query_feed_for_emails
@@ -99,9 +103,8 @@ def _enrich(share: dict, viewer_email: str) -> dict:
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, 'email')
 
-    email = params.get('email')
+    email = get_caller_email(event)
     group_id = params.get('groupId')
     limit = _parse_limit(params.get('limit'))
     before = params.get('before')

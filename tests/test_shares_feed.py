@@ -8,18 +8,18 @@ from unittest.mock import patch
 from lambdas.shares_feed.handler import handler
 
 
-def _event(api_gateway_event, params):
-    return {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/shares/feed",
-        "queryStringParameters": params,
-    }
+def _event(authorized_event, params, email="me@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="GET",
+        path="/shares/feed",
+        queryStringParameters=params,
+    )
 
 
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
-def test_shares_feed_happy_path(mock_friends, mock_query, mock_context, api_gateway_event):
+def test_shares_feed_happy_path(mock_friends, mock_query, mock_context, authorized_event):
     mock_friends.return_value = [
         {"friendEmail": "alice@example.com", "status": "accepted"},
         {"friendEmail": "bob@example.com", "status": "accepted"},
@@ -30,7 +30,10 @@ def test_shares_feed_happy_path(mock_friends, mock_query, mock_context, api_gate
         {"shareId": "2", "email": "me@example.com", "createdAt": "2026-04-22T11:00:00+00:00"},
     ]
 
-    response = handler(_event(api_gateway_event, {"email": "me@example.com"}), mock_context)
+    response = handler(
+        _event(authorized_event, {}, email="me@example.com"),
+        mock_context,
+    )
 
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
@@ -45,11 +48,14 @@ def test_shares_feed_happy_path(mock_friends, mock_query, mock_context, api_gate
 
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
-def test_shares_feed_empty_friends(mock_friends, mock_query, mock_context, api_gateway_event):
+def test_shares_feed_empty_friends(mock_friends, mock_query, mock_context, authorized_event):
     mock_friends.return_value = []
     mock_query.return_value = []
 
-    response = handler(_event(api_gateway_event, {"email": "solo@example.com"}), mock_context)
+    response = handler(
+        _event(authorized_event, {}, email="solo@example.com"),
+        mock_context,
+    )
 
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
@@ -63,7 +69,7 @@ def test_shares_feed_empty_friends(mock_friends, mock_query, mock_context, api_g
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
 def test_shares_feed_group_filter_intersects(
-    mock_friends, mock_query, mock_members, mock_context, api_gateway_event
+    mock_friends, mock_query, mock_members, mock_context, authorized_event
 ):
     mock_friends.return_value = [
         {"friendEmail": "alice@example.com", "status": "accepted"},
@@ -77,7 +83,7 @@ def test_shares_feed_group_filter_intersects(
     mock_query.return_value = []
 
     handler(
-        _event(api_gateway_event, {"email": "me@example.com", "groupId": "g1"}),
+        _event(authorized_event, {"groupId": "g1"}, email="me@example.com"),
         mock_context,
     )
 
@@ -93,7 +99,7 @@ def test_shares_feed_group_filter_intersects(
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
 def test_shares_feed_public_feed_excludes_group_only_rows(
-    mock_friends, mock_query, mock_context, api_gateway_event
+    mock_friends, mock_query, mock_context, authorized_event
 ):
     """Friends feed (no groupId) must hide rows with public=False."""
     mock_friends.return_value = [
@@ -114,7 +120,7 @@ def test_shares_feed_public_feed_excludes_group_only_rows(
     ]
 
     response = handler(
-        _event(api_gateway_event, {"email": "me@example.com"}),
+        _event(authorized_event, {}),
         mock_context,
     )
 
@@ -129,7 +135,7 @@ def test_shares_feed_public_feed_excludes_group_only_rows(
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
 def test_shares_feed_group_feed_includes_group_targeted_rows(
-    mock_friends, mock_query, mock_members, mock_context, api_gateway_event
+    mock_friends, mock_query, mock_members, mock_context, authorized_event
 ):
     """Group feed must include both group-only and dual shares targeted to that
     group, and must drop rows that don't list the group in groupIds."""
@@ -159,7 +165,7 @@ def test_shares_feed_group_feed_includes_group_targeted_rows(
     ]
 
     response = handler(
-        _event(api_gateway_event, {"email": "me@example.com", "groupId": "g1"}),
+        _event(authorized_event, {"groupId": "g1"}),
         mock_context,
     )
 
@@ -172,7 +178,7 @@ def test_shares_feed_group_feed_includes_group_targeted_rows(
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
 def test_shares_feed_legacy_rows_visible_on_public_feed(
-    mock_friends, mock_query, mock_context, api_gateway_event
+    mock_friends, mock_query, mock_context, authorized_event
 ):
     """Rows written before the multi-target rollout have no `public` field
     and must stay visible on the public feed."""
@@ -183,7 +189,7 @@ def test_shares_feed_legacy_rows_visible_on_public_feed(
     ]
 
     response = handler(
-        _event(api_gateway_event, {"email": "me@example.com"}),
+        _event(authorized_event, {}),
         mock_context,
     )
 
@@ -195,19 +201,28 @@ def test_shares_feed_legacy_rows_visible_on_public_feed(
 @patch('lambdas.shares_feed.handler.query_feed_for_emails')
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
 def test_shares_feed_limit_exceeds_max(
-    mock_friends, mock_query, mock_context, api_gateway_event
+    mock_friends, mock_query, mock_context, authorized_event
 ):
     mock_friends.return_value = []
     response = handler(
-        _event(api_gateway_event, {"email": "me@example.com", "limit": "500"}),
+        _event(authorized_event, {"limit": "500"}),
         mock_context,
     )
     assert response['statusCode'] == 400
     mock_query.assert_not_called()
 
 
+# ------------------------------------------------------------------ Auth
 @patch('lambdas.shares_feed.handler.list_all_friends_for_user')
-def test_shares_feed_missing_email(mock_friends, mock_context, api_gateway_event):
-    response = handler(_event(api_gateway_event, {}), mock_context)
-    assert response['statusCode'] == 400
+def test_shares_feed_missing_caller_identity_returns_401(
+    mock_friends, mock_context, api_gateway_event
+):
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/shares/feed",
+        "queryStringParameters": {},
+    }
+    response = handler(event, mock_context)
+    assert response['statusCode'] == 401
     mock_friends.assert_not_called()

@@ -8,6 +8,7 @@ Covers:
 - invalid emoji rejected -> 400
 - missing share -> 404
 - group-only share, non-member -> 404
+- missing caller identity -> 401
 """
 
 from __future__ import annotations
@@ -18,13 +19,13 @@ from unittest.mock import patch
 from lambdas.shares_reactions_toggle.handler import handler
 
 
-def _event(api_gateway_event, body):
-    return {
-        **api_gateway_event,
-        "httpMethod": "POST",
-        "path": "/shares/reactions",
-        "body": json.dumps(body),
-    }
+def _event(authorized_event, body, email="bob@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="POST",
+        path="/shares/reactions",
+        body=json.dumps(body),
+    )
 
 
 def _share(public=True, group_ids=None):
@@ -44,7 +45,7 @@ def _share(public=True, group_ids=None):
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
 def test_toggle_on_inserts_when_missing(
     mock_get_share, mock_get_reaction, mock_remove, mock_add, mock_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     mock_get_share.return_value = _share()
     mock_get_reaction.return_value = None
@@ -53,8 +54,8 @@ def test_toggle_on_inserts_when_missing(
         "viewerReactions": ["fire"],
     }
 
-    body = {"email": "bob@example.com", "shareId": "share-1", "reaction": "fire"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "reaction": "fire"}
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
     assert payload["active"] is True
@@ -73,7 +74,7 @@ def test_toggle_on_inserts_when_missing(
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
 def test_toggle_off_deletes_when_present(
     mock_get_share, mock_get_reaction, mock_remove, mock_add, mock_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     mock_get_share.return_value = _share()
     mock_get_reaction.return_value = {
@@ -83,8 +84,8 @@ def test_toggle_off_deletes_when_present(
     }
     mock_summary.return_value = {"counts": {}, "viewerReactions": []}
 
-    body = {"email": "bob@example.com", "shareId": "share-1", "reaction": "fire"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "reaction": "fire"}
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
     assert payload["active"] is False
@@ -100,7 +101,7 @@ def test_toggle_off_deletes_when_present(
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
 def test_user_can_have_multiple_emoji_at_once(
     mock_get_share, mock_get_reaction, mock_remove, mock_add, mock_summary,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """User has 'fire' set, taps 'heart' -> heart is inserted, fire untouched."""
     mock_get_share.return_value = _share()
@@ -112,8 +113,8 @@ def test_user_can_have_multiple_emoji_at_once(
         "viewerReactions": ["fire", "heart"],
     }
 
-    body = {"email": "bob@example.com", "shareId": "share-1", "reaction": "heart"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "reaction": "heart"}
+    response = handler(_event(authorized_event, body, email="bob@example.com"), mock_context)
     assert response["statusCode"] == 200
     payload = json.loads(response["body"])
     assert payload["active"] is True
@@ -125,27 +126,27 @@ def test_user_can_have_multiple_emoji_at_once(
 
 # ------------------------------------------------------------------ Validation
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
-def test_invalid_emoji_rejected(mock_get_share, mock_context, api_gateway_event):
-    body = {"email": "bob@example.com", "shareId": "share-1", "reaction": "skull"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+def test_invalid_emoji_rejected(mock_get_share, mock_context, authorized_event):
+    body = {"shareId": "share-1", "reaction": "skull"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_get_share.assert_not_called()
 
 
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
-def test_missing_required_fields(mock_get_share, mock_context, api_gateway_event):
-    body = {"email": "bob@example.com", "shareId": "share-1"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+def test_missing_required_fields(mock_get_share, mock_context, authorized_event):
+    body = {"shareId": "share-1"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 400
     mock_get_share.assert_not_called()
 
 
 # ------------------------------------------------------------------ 404 cases
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
-def test_share_not_found(mock_get_share, mock_context, api_gateway_event):
+def test_share_not_found(mock_get_share, mock_context, authorized_event):
     mock_get_share.return_value = None
-    body = {"email": "bob@example.com", "shareId": "missing", "reaction": "fire"}
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "missing", "reaction": "fire"}
+    response = handler(_event(authorized_event, body), mock_context)
     assert response["statusCode"] == 404
 
 
@@ -155,16 +156,30 @@ def test_share_not_found(mock_get_share, mock_context, api_gateway_event):
 @patch("lambdas.shares_reactions_toggle.handler.get_share")
 def test_group_only_blocks_non_member(
     mock_get_share, mock_get_reaction, mock_add, mock_member,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     mock_get_share.return_value = _share(public=False, group_ids=["g1"])
     mock_member.return_value = False
-    body = {
-        "email": "stranger@example.com",
-        "shareId": "share-1",
-        "reaction": "fire",
-    }
-    response = handler(_event(api_gateway_event, body), mock_context)
+    body = {"shareId": "share-1", "reaction": "fire"}
+    response = handler(
+        _event(authorized_event, body, email="stranger@example.com"), mock_context
+    )
     assert response["statusCode"] == 404
     mock_get_reaction.assert_not_called()
     mock_add.assert_not_called()
+
+
+# ------------------------------------------------------------------ Auth
+@patch("lambdas.shares_reactions_toggle.handler.get_share")
+def test_missing_caller_identity_returns_401(
+    mock_get_share, mock_context, api_gateway_event
+):
+    event = {
+        **api_gateway_event,
+        "httpMethod": "POST",
+        "path": "/shares/reactions",
+        "body": json.dumps({"shareId": "share-1", "reaction": "fire"}),
+    }
+    response = handler(event, mock_context)
+    assert response["statusCode"] == 401
+    mock_get_share.assert_not_called()

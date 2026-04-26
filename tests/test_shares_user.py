@@ -1,5 +1,8 @@
 """
-Tests for shares_user lambda
+Tests for shares_user lambda.
+
+Note: caller identity (`email`) comes from the JWT authorizer context;
+`targetEmail` (the AUTHOR being viewed) stays a query param.
 """
 
 import json
@@ -8,17 +11,17 @@ from unittest.mock import patch
 from lambdas.shares_user.handler import handler
 
 
-def _event(api_gateway_event, params):
-    return {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/shares/user",
-        "queryStringParameters": params,
-    }
+def _event(authorized_event, params, email="me@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="GET",
+        path="/shares/user",
+        queryStringParameters=params,
+    )
 
 
 @patch('lambdas.shares_user.handler.list_shares_for_user')
-def test_shares_user_happy_path(mock_list, mock_context, api_gateway_event):
+def test_shares_user_happy_path(mock_list, mock_context, authorized_event):
     mock_list.return_value = (
         [
             {"shareId": "1", "email": "target@example.com", "createdAt": "2026-04-22T12:00:00+00:00"},
@@ -28,7 +31,11 @@ def test_shares_user_happy_path(mock_list, mock_context, api_gateway_event):
     )
 
     response = handler(
-        _event(api_gateway_event, {"email": "me@example.com", "targetEmail": "target@example.com"}),
+        _event(
+            authorized_event,
+            {"targetEmail": "target@example.com"},
+            email="me@example.com",
+        ),
         mock_context,
     )
 
@@ -40,12 +47,11 @@ def test_shares_user_happy_path(mock_list, mock_context, api_gateway_event):
 
 
 @patch('lambdas.shares_user.handler.list_shares_for_user')
-def test_shares_user_pagination_cursor(mock_list, mock_context, api_gateway_event):
+def test_shares_user_pagination_cursor(mock_list, mock_context, authorized_event):
     mock_list.return_value = ([], "2026-04-20T00:00:00+00:00")
 
     response = handler(
-        _event(api_gateway_event, {
-            "email": "me@example.com",
+        _event(authorized_event, {
             "targetEmail": "target@example.com",
             "limit": "10",
             "before": "2026-04-22T00:00:00+00:00",
@@ -62,9 +68,9 @@ def test_shares_user_pagination_cursor(mock_list, mock_context, api_gateway_even
 
 
 @patch('lambdas.shares_user.handler.list_shares_for_user')
-def test_shares_user_missing_target(mock_list, mock_context, api_gateway_event):
+def test_shares_user_missing_target(mock_list, mock_context, authorized_event):
     response = handler(
-        _event(api_gateway_event, {"email": "me@example.com"}),
+        _event(authorized_event, {}),
         mock_context,
     )
     assert response['statusCode'] == 400
@@ -72,10 +78,9 @@ def test_shares_user_missing_target(mock_list, mock_context, api_gateway_event):
 
 
 @patch('lambdas.shares_user.handler.list_shares_for_user')
-def test_shares_user_limit_exceeds_max(mock_list, mock_context, api_gateway_event):
+def test_shares_user_limit_exceeds_max(mock_list, mock_context, authorized_event):
     response = handler(
-        _event(api_gateway_event, {
-            "email": "me@example.com",
+        _event(authorized_event, {
             "targetEmail": "target@example.com",
             "limit": "500",
         }),
@@ -88,7 +93,7 @@ def test_shares_user_limit_exceeds_max(mock_list, mock_context, api_gateway_even
 @patch('lambdas.shares_user.handler.build_enrichment')
 @patch('lambdas.shares_user.handler.list_shares_for_user')
 def test_shares_user_hides_group_only_shares(
-    mock_list, mock_enrich, mock_context, api_gateway_event
+    mock_list, mock_enrich, mock_context, authorized_event
 ):
     """Profile view only surfaces public shares — group-only rows stay scoped
     to their group feeds. Legacy rows (no `public` field) remain visible."""
@@ -114,9 +119,7 @@ def test_shares_user_hides_group_only_shares(
     )
 
     response = handler(
-        _event(api_gateway_event, {
-            "email": "me@example.com", "targetEmail": "target@example.com",
-        }),
+        _event(authorized_event, {"targetEmail": "target@example.com"}),
         mock_context,
     )
 
@@ -124,3 +127,21 @@ def test_shares_user_hides_group_only_shares(
     body = json.loads(response['body'])
     ids = {s['shareId'] for s in body['shares']}
     assert ids == {"legacy", "dual"}
+
+
+# ------------------------------------------------------------------ Auth
+@patch('lambdas.shares_user.handler.list_shares_for_user')
+def test_shares_user_missing_caller_identity_returns_401(
+    mock_list, mock_context, api_gateway_event
+):
+    """Caller is required (via authorizer or fallback) even though target is
+    a different field. Without either, we 401 — not 400."""
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/shares/user",
+        "queryStringParameters": {"targetEmail": "target@example.com"},
+    }
+    response = handler(event, mock_context)
+    assert response['statusCode'] == 401
+    mock_list.assert_not_called()

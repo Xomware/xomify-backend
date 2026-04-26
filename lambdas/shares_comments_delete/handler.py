@@ -3,10 +3,12 @@ DELETE /shares/comments - Hard-delete a comment.
 
 Body schema:
     {
-        "email":     "viewer@...",
         "shareId":   "<uuid>",
         "commentId": "<uuid>"
     }
+
+Caller identity comes from `requestContext.authorizer.email`; the helper
+keeps a body/query fallback during the Track 0 -> Track 1 migration.
 
 Authorization:
 - Comment author OR share author may delete.
@@ -27,6 +29,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     parse_body,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_comments_dynamo import get_comment, delete_comment
@@ -39,9 +42,9 @@ HANDLER = "shares_comments_delete"
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, "email", "shareId", "commentId")
+    require_fields(body, "shareId", "commentId")
 
-    email: str = body.get("email")
+    email: str = get_caller_email(event)
     share_id: str = body.get("shareId")
     comment_id: str = body.get("commentId")
 

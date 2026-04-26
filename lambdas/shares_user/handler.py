@@ -4,6 +4,13 @@ GET /shares/user - List shares authored by a specific user (no friendship gate i
 Profile view only surfaces PUBLIC shares — group-only shares stay scoped to
 their group feeds and are not leaked via the author's profile. Legacy rows
 (no `public` field) are treated as public so older data keeps flowing.
+
+Caller (requester) email is sourced from `requestContext.authorizer.email`
+via `get_caller_email`; legacy callers may still pass `email` in the
+query string during the Track 0 -> Track 1 migration window.
+
+`targetEmail` is the AUTHOR being viewed and stays as a query param —
+it is NOT the caller.
 """
 
 from lambdas.common.logger import get_logger
@@ -12,6 +19,7 @@ from lambdas.common.utility_helpers import (
     success_response,
     get_query_params,
     require_fields,
+    get_caller_email,
 )
 from lambdas.common.shares_dynamo import list_shares_for_user
 from lambdas.common.interactions_dynamo import build_enrichment
@@ -56,10 +64,10 @@ def _parse_limit(raw: str | None) -> int:
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    # email is the requester (kept for future friendship gating); targetEmail is the author
-    require_fields(params, 'email', 'targetEmail')
+    # targetEmail is the author whose profile is being viewed (NOT the caller).
+    require_fields(params, 'targetEmail')
 
-    email = params.get('email')
+    email = get_caller_email(event)
     target_email = params.get('targetEmail')
     limit = _parse_limit(params.get('limit'))
     before = params.get('before')

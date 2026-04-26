@@ -6,6 +6,7 @@ Covers:
 - limit clamping / validation
 - missing share -> 404
 - group-only share, non-member -> 404
+- missing caller identity -> 401
 """
 
 from __future__ import annotations
@@ -16,13 +17,13 @@ from unittest.mock import patch
 from lambdas.shares_comments_list.handler import handler
 
 
-def _event(api_gateway_event, params):
-    return {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/shares/comments",
-        "queryStringParameters": params,
-    }
+def _event(authorized_event, params, email="viewer@example.com"):
+    return authorized_event(
+        email=email,
+        httpMethod="GET",
+        path="/shares/comments",
+        queryStringParameters=params,
+    )
 
 
 def _share(public=True, group_ids=None):
@@ -41,7 +42,7 @@ def _share(public=True, group_ids=None):
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_happy_path_with_profiles_and_cursor(
-    mock_get_share, mock_list, mock_users, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_users, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_list.return_value = (
@@ -71,8 +72,7 @@ def test_happy_path_with_profiles_and_cursor(
     }
 
     response = handler(
-        _event(api_gateway_event, {
-            "email": "viewer@example.com",
+        _event(authorized_event, {
             "shareId": "share-1",
             "limit": "2",
         }),
@@ -101,16 +101,13 @@ def test_happy_path_with_profiles_and_cursor(
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_empty_thread_returns_empty_list_not_500(
-    mock_get_share, mock_list, mock_users, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_users, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share()
     mock_list.return_value = ([], None)
 
     response = handler(
-        _event(api_gateway_event, {
-            "email": "viewer@example.com",
-            "shareId": "share-1",
-        }),
+        _event(authorized_event, {"shareId": "share-1"}),
         mock_context,
     )
 
@@ -125,11 +122,10 @@ def test_empty_thread_returns_empty_list_not_500(
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_limit_must_be_integer(
-    mock_get_share, mock_list, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_context, authorized_event
 ):
     response = handler(
-        _event(api_gateway_event, {
-            "email": "viewer@example.com",
+        _event(authorized_event, {
             "shareId": "share-1",
             "limit": "abc",
         }),
@@ -142,11 +138,10 @@ def test_limit_must_be_integer(
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_limit_capped(
-    mock_get_share, mock_list, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_context, authorized_event
 ):
     response = handler(
-        _event(api_gateway_event, {
-            "email": "viewer@example.com",
+        _event(authorized_event, {
             "shareId": "share-1",
             "limit": "9999",
         }),
@@ -158,10 +153,10 @@ def test_limit_capped(
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_missing_required_fields(
-    mock_get_share, mock_list, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_context, authorized_event
 ):
     response = handler(
-        _event(api_gateway_event, {"email": "viewer@example.com"}),
+        _event(authorized_event, {}),
         mock_context,
     )
     assert response["statusCode"] == 400
@@ -172,14 +167,11 @@ def test_missing_required_fields(
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_share_not_found(
-    mock_get_share, mock_list, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_context, authorized_event
 ):
     mock_get_share.return_value = None
     response = handler(
-        _event(api_gateway_event, {
-            "email": "viewer@example.com",
-            "shareId": "missing",
-        }),
+        _event(authorized_event, {"shareId": "missing"}),
         mock_context,
     )
     assert response["statusCode"] == 404
@@ -190,16 +182,31 @@ def test_share_not_found(
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
 def test_group_only_blocks_non_member(
-    mock_get_share, mock_list, mock_member, mock_context, api_gateway_event
+    mock_get_share, mock_list, mock_member, mock_context, authorized_event
 ):
     mock_get_share.return_value = _share(public=False, group_ids=["g1"])
     mock_member.return_value = False
     response = handler(
-        _event(api_gateway_event, {
-            "email": "stranger@example.com",
-            "shareId": "share-1",
-        }),
+        _event(authorized_event, {"shareId": "share-1"}, email="stranger@example.com"),
         mock_context,
     )
     assert response["statusCode"] == 404
+    mock_list.assert_not_called()
+
+
+# ------------------------------------------------------------------ Auth
+@patch("lambdas.shares_comments_list.handler.list_comments")
+@patch("lambdas.shares_comments_list.handler.get_share")
+def test_missing_caller_identity_returns_401(
+    mock_get_share, mock_list, mock_context, api_gateway_event
+):
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/shares/comments",
+        "queryStringParameters": {"shareId": "share-1"},
+    }
+    response = handler(event, mock_context)
+    assert response["statusCode"] == 401
+    mock_get_share.assert_not_called()
     mock_list.assert_not_called()
