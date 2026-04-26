@@ -26,7 +26,12 @@ metadata is optional — a missing field just won't be persisted.
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.group_tracks_dynamo import add_track_to_group
 
 log = get_logger(__file__)
@@ -62,9 +67,9 @@ def _extract_track_fields(body: dict) -> tuple[str | None, str | None, str | Non
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'groupId', 'trackId')
+    require_fields(body, 'groupId', 'trackId')
 
-    email = body.get('email')
+    email = get_caller_email(event)
     group_id = body.get('groupId')
     track_id = body.get('trackId')
 

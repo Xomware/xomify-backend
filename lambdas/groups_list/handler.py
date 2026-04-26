@@ -17,7 +17,7 @@ must never break /groups/list).
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
+from lambdas.common.utility_helpers import success_response, get_caller_email
 from lambdas.common.group_members_dynamo import list_groups_for_user, list_members_of_group
 from lambdas.common.groups_dynamo import batch_get_groups, update_group_member_count
 
@@ -28,10 +28,7 @@ HANDLER = 'groups_list'
 
 @handle_errors(HANDLER)
 def handler(event, context):
-    params = get_query_params(event)
-    require_fields(params, 'email')
-
-    email = params.get('email')
+    email = get_caller_email(event)
 
     log.info(f"Listing all groups for user {email}")
     memberships = list_groups_for_user(email)

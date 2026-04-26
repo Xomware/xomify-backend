@@ -5,7 +5,12 @@ DELETE /groups/remove - Delete a group (owner only)
 import boto3
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError
-from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    get_query_params,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.constants import GROUPS_TABLE_NAME
 from lambdas.common.group_members_dynamo import list_members_of_group
 
@@ -17,9 +22,9 @@ HANDLER = 'groups_remove'
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, 'email', 'groupId')
+    require_fields(params, 'groupId')
 
-    email = params.get('email')
+    email = get_caller_email(event)
     group_id = params.get('groupId')
 
     # Verify user is owner

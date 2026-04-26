@@ -6,7 +6,12 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    get_query_params,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.groups_dynamo import get_group
 from lambdas.common.group_members_dynamo import list_members_of_group
 from lambdas.common.group_tracks_dynamo import list_tracks_for_group
@@ -19,9 +24,9 @@ HANDLER = 'groups_info'
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, 'email', 'groupId')
+    require_fields(params, 'groupId')
 
-    email = params.get('email')
+    email = get_caller_email(event)
     group_id = params.get('groupId')
 
     log.info(f"Getting Group {group_id} info, members and tracks. Called by {email}")

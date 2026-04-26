@@ -5,7 +5,11 @@ DELETE /groups/remove-song - Remove a song from group
 import boto3
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import get_query_params, require_fields
+from lambdas.common.utility_helpers import (
+    get_query_params,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.constants import GROUP_TRACKS_TABLE_NAME
 
 log = get_logger(__file__)
@@ -16,9 +20,9 @@ HANDLER = 'groups_remove_song'
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, 'email', 'groupId', 'songId')
+    require_fields(params, 'groupId', 'songId')
 
-    email = params.get('email')
+    email = get_caller_email(event)
     group_id = params.get('groupId')
     song_id = params.get('songId')  # This is the trackIdTimestamp (SK)
 

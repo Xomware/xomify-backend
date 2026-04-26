@@ -4,7 +4,11 @@ DELETE /groups/remove-member - Remove a member from group
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import get_query_params, require_fields
+from lambdas.common.utility_helpers import (
+    get_query_params,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.group_members_dynamo import remove_group_member
 
 log = get_logger(__file__)
@@ -15,9 +19,9 @@ HANDLER = 'groups_remove_member'
 @handle_errors(HANDLER)
 def handler(event, context):
     params = get_query_params(event)
-    require_fields(params, 'email', 'groupId', 'memberEmail')
+    require_fields(params, 'groupId', 'memberEmail')
 
-    email = params.get('email')
+    email = get_caller_email(event)
     group_id = params.get('groupId')
     member_email = params.get('memberEmail')
 

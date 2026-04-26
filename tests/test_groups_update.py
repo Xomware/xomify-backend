@@ -1,26 +1,29 @@
 """
 Tests for groups_update lambda — ensures updates use ExpressionAttributeNames
 to avoid the DynamoDB reserved keyword collision on `name`.
+
+Caller email is sourced from the authorizer context via `authorized_event`
+(post Track 1 migration). `groupId` and the updatable fields stay in body.
 """
 
 import json
 from unittest.mock import patch, MagicMock
 
 
-def _make_event(api_gateway_event, body: dict) -> dict:
-    return {
-        **api_gateway_event,
-        "httpMethod": "PUT",
-        "path": "/groups/update",
-        "body": json.dumps(body)
-    }
+def _make_event(authorized_event, email: str, body: dict) -> dict:
+    return authorized_event(
+        email=email,
+        httpMethod="PUT",
+        path="/groups/update",
+        body=json.dumps(body),
+    )
 
 
 @patch('lambdas.groups_update.handler.get_group')
 @patch('lambdas.groups_update.handler.boto3')
 @patch('lambdas.groups_update.handler.list_members_of_group')
 def test_groups_update_uses_expression_attribute_names_for_reserved_keyword(
-    mock_list_members, mock_boto3, mock_get_group, mock_context, api_gateway_event
+    mock_list_members, mock_boto3, mock_get_group, mock_context, authorized_event
 ):
     """`name` is a DynamoDB reserved word — the UpdateExpression must alias it via #name."""
     from lambdas.groups_update.handler import handler
@@ -40,8 +43,7 @@ def test_groups_update_uses_expression_attribute_names_for_reserved_keyword(
         "memberCount": 3
     }
 
-    event = _make_event(api_gateway_event, {
-        "email": "owner@example.com",
+    event = _make_event(authorized_event, "owner@example.com", {
         "groupId": "g1",
         "name": "New Name",
         "description": "new desc"
@@ -75,7 +77,7 @@ def test_groups_update_uses_expression_attribute_names_for_reserved_keyword(
 @patch('lambdas.groups_update.handler.boto3')
 @patch('lambdas.groups_update.handler.list_members_of_group')
 def test_groups_update_only_name_still_aliases_it(
-    mock_list_members, mock_boto3, mock_get_group, mock_context, api_gateway_event
+    mock_list_members, mock_boto3, mock_get_group, mock_context, authorized_event
 ):
     """When only `name` is updated, we still alias it (the whole point of the fix)."""
     from lambdas.groups_update.handler import handler
@@ -88,8 +90,7 @@ def test_groups_update_only_name_still_aliases_it(
     mock_boto3.resource.return_value.Table.return_value = mock_table
     mock_get_group.return_value = {"groupId": "g1", "name": "Renamed"}
 
-    event = _make_event(api_gateway_event, {
-        "email": "owner@example.com",
+    event = _make_event(authorized_event, "owner@example.com", {
         "groupId": "g1",
         "name": "Renamed"
     })
@@ -105,7 +106,7 @@ def test_groups_update_only_name_still_aliases_it(
 
 @patch('lambdas.groups_update.handler.list_members_of_group')
 def test_groups_update_rejects_non_owner(
-    mock_list_members, mock_context, api_gateway_event
+    mock_list_members, mock_context, authorized_event
 ):
     from lambdas.groups_update.handler import handler
 
@@ -113,11 +114,28 @@ def test_groups_update_rejects_non_owner(
         {"email": "member@example.com", "groupId": "g1", "role": "member"}
     ]
 
-    event = _make_event(api_gateway_event, {
-        "email": "member@example.com",
+    event = _make_event(authorized_event, "member@example.com", {
         "groupId": "g1",
         "name": "Hostile Rename"
     })
 
     response = handler(event, mock_context)
     assert response['statusCode'] == 400
+
+
+@patch('lambdas.groups_update.handler.list_members_of_group')
+def test_groups_update_missing_caller_identity_returns_401(
+    mock_list_members, mock_context, legacy_event,
+):
+    """No authorizer context AND no caller email in query/body -> 401, no DDB reads."""
+    from lambdas.groups_update.handler import handler
+
+    event = legacy_event()
+    event["httpMethod"] = "PUT"
+    event["path"] = "/groups/update"
+    event["body"] = json.dumps({"groupId": "g1", "name": "Anon Rename"})
+
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 401
+    mock_list_members.assert_not_called()

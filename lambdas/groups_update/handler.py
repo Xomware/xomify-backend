@@ -5,7 +5,12 @@ PUT /groups/update - Update group details
 import boto3
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.constants import GROUPS_TABLE_NAME
 from lambdas.common.groups_dynamo import get_group
 from lambdas.common.group_members_dynamo import list_members_of_group
@@ -18,9 +23,9 @@ HANDLER = 'groups_update'
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'groupId')
+    require_fields(body, 'groupId')
 
-    email = body.get('email')
+    email = get_caller_email(event)
     group_id = body.get('groupId')
     name = body.get('name')
     description = body.get('description')

@@ -7,6 +7,9 @@ memberCount is always recomputed live from the membership GSI — the
 cached attribute on the GROUPS row has historically drifted (old seed
 set fresh 1-member groups to 2 until PR #136). The handler also issues
 a best-effort write-back to heal the stored value.
+
+Caller email is sourced from the authorizer context via `authorized_event`
+(post Track 1 migration). The handler takes no other request fields.
 """
 
 import json
@@ -15,13 +18,21 @@ from unittest.mock import patch
 from lambdas.groups_list.handler import handler
 
 
+def _event(authorized_event, email: str) -> dict:
+    return authorized_event(
+        email=email,
+        httpMethod="GET",
+        path="/groups/list",
+    )
+
+
 @patch('lambdas.groups_list.handler.update_group_member_count')
 @patch('lambdas.groups_list.handler.list_members_of_group')
 @patch('lambdas.groups_list.handler.batch_get_groups')
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_hydrates_membership_with_group_metadata(
     mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """Membership rows get merged with the full Group item so `name`,
     `createdBy`, `memberCount` end up on the wire."""
@@ -39,12 +50,7 @@ def test_groups_list_hydrates_membership_with_group_metadata(
         else [{"email": f"u{i}@example.com"} for i in range(7)]
     )
 
-    event = {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/groups/list",
-        "queryStringParameters": {"email": "test@example.com"}
-    }
+    event = _event(authorized_event, "test@example.com")
 
     response = handler(event, mock_context)
 
@@ -74,7 +80,7 @@ def test_groups_list_hydrates_membership_with_group_metadata(
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_drops_memberships_with_missing_group(
     mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """If the Groups table no longer has a row for a membership's groupId
     (e.g. the group was deleted but the membership wasn't cleaned up), the
@@ -91,12 +97,7 @@ def test_groups_list_drops_memberships_with_missing_group(
         {"email": "test@example.com"},
     ]
 
-    event = {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/groups/list",
-        "queryStringParameters": {"email": "test@example.com"}
-    }
+    event = _event(authorized_event, "test@example.com")
 
     response = handler(event, mock_context)
 
@@ -113,17 +114,12 @@ def test_groups_list_drops_memberships_with_missing_group(
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_empty(
     mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     mock_list_memberships.return_value = []
     mock_batch_get.return_value = []
 
-    event = {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/groups/list",
-        "queryStringParameters": {"email": "test@example.com"}
-    }
+    event = _event(authorized_event, "test@example.com")
 
     response = handler(event, mock_context)
 
@@ -141,7 +137,7 @@ def test_groups_list_empty(
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_returns_live_member_count_when_cache_is_stale(
     mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """Regression test for the seed-bug leftover: cached memberCount=2 on a
     group that actually has 1 member. The response must carry the live count,
@@ -156,12 +152,7 @@ def test_groups_list_returns_live_member_count_when_cache_is_stale(
     # GSI shows the group truly has one member.
     mock_list_members.return_value = [{"email": "solo@example.com"}]
 
-    event = {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/groups/list",
-        "queryStringParameters": {"email": "solo@example.com"}
-    }
+    event = _event(authorized_event, "solo@example.com")
 
     response = handler(event, mock_context)
 
@@ -181,7 +172,7 @@ def test_groups_list_returns_live_member_count_when_cache_is_stale(
 @patch('lambdas.groups_list.handler.list_groups_for_user')
 def test_groups_list_heal_failure_does_not_break_response(
     mock_list_memberships, mock_batch_get, mock_list_members, mock_update_count,
-    mock_context, api_gateway_event,
+    mock_context, authorized_event,
 ):
     """A blow-up from the best-effort write-back must not fail the request."""
     mock_list_memberships.return_value = [
@@ -193,15 +184,25 @@ def test_groups_list_heal_failure_does_not_break_response(
     mock_list_members.return_value = [{"email": "solo@example.com"}]
     mock_update_count.side_effect = RuntimeError("DynamoDB threw")
 
-    event = {
-        **api_gateway_event,
-        "httpMethod": "GET",
-        "path": "/groups/list",
-        "queryStringParameters": {"email": "solo@example.com"}
-    }
+    event = _event(authorized_event, "solo@example.com")
 
     response = handler(event, mock_context)
 
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
     assert body['groups'][0]['memberCount'] == 1
+
+
+@patch('lambdas.groups_list.handler.list_groups_for_user')
+def test_groups_list_missing_caller_identity_returns_401(
+    mock_list_memberships, mock_context, legacy_event,
+):
+    """No authorizer context AND no caller email in query/body -> 401, no DDB reads."""
+    event = legacy_event()  # no email / userId anywhere
+    event["httpMethod"] = "GET"
+    event["path"] = "/groups/list"
+
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 401
+    mock_list_memberships.assert_not_called()
