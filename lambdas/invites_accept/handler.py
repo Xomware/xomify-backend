@@ -14,7 +14,12 @@ from lambdas.common.errors import (
     XomifyError,
     DynamoDBError,
 )
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.invites_dynamo import get_invite, consume_invite
 from lambdas.common.friendships_dynamo import (
     list_all_friends_for_user,
@@ -50,9 +55,12 @@ def _is_already_friends(email: str, other_email: str) -> bool:
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, 'email', 'inviteCode')
+    require_fields(body, 'inviteCode')
 
-    email = body.get('email')
+    # Caller identity comes from the authorizer context (per-user JWT). During
+    # the Track 0 -> Track 1 migration window the helper falls back to the
+    # body/query-string `email` so legacy static-token clients still work.
+    email = get_caller_email(event)
     invite_code = body.get('inviteCode')
 
     log.info(f"User {email} accepting invite {invite_code}")

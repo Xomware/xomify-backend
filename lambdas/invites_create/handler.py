@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors, ValidationError, XomifyError
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import success_response, get_caller_email
 from lambdas.common.invites_dynamo import (
     create_invite,
     generate_invite_code,
@@ -25,10 +25,10 @@ COLLISION_RETRY_LIMIT = 2
 
 @handle_errors(HANDLER)
 def handler(event, context):
-    body = parse_body(event)
-    require_fields(body, 'email')
-
-    sender_email = body.get('email')
+    # Caller identity comes from the authorizer context (per-user JWT). During
+    # the Track 0 -> Track 1 migration window the helper falls back to the
+    # body/query-string `email` so legacy static-token clients still work.
+    sender_email = get_caller_email(event)
 
     # Rate limit — max 10 outstanding invites per sender
     outstanding = count_outstanding_invites_for_sender(sender_email)

@@ -1,5 +1,5 @@
 """
-Tests for invites_accept lambda.
+Tests for invites_decline lambda.
 
 Caller identity is sourced via `get_caller_email`, which prefers the per-user
 JWT context populated by the authorizer and falls back to the body-supplied
@@ -13,14 +13,14 @@ from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 
-from lambdas.invites_accept.handler import handler
+from lambdas.invites_decline.handler import handler
 
 
 def _post_event(base_event, body):
     return {
         **base_event,
         "httpMethod": "POST",
-        "path": "/invites/accept",
+        "path": "/invites/decline",
         "body": json.dumps(body),
     }
 
@@ -37,21 +37,17 @@ def _past_iso(days: int = 1) -> str:
 # Trusted authorizer-context path (per-user JWT)
 # ============================================
 
-@patch('lambdas.invites_accept.handler.create_accepted_friendship')
-@patch('lambdas.invites_accept.handler.list_all_friends_for_user')
-@patch('lambdas.invites_accept.handler.consume_invite')
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_happy_path_context(
-    mock_get, mock_consume, mock_friends, mock_create_fs, mock_context, authorized_event
+@patch('lambdas.invites_decline.handler.decline_invite')
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_happy_path_context(
+    mock_get, mock_decline, mock_context, authorized_event
 ):
     mock_get.return_value = {
         "inviteCode": "ABCDEFGH",
         "senderEmail": "alice@example.com",
         "expiresAt": _future_iso(),
     }
-    mock_friends.return_value = []
-    mock_consume.return_value = {"consumedAt": "2026-04-22T12:00:00+00:00"}
-    mock_create_fs.return_value = True
+    mock_decline.return_value = {"consumedAt": "2026-04-22T12:00:00+00:00"}
 
     event = _post_event(
         authorized_event(email="bob@example.com"),
@@ -63,28 +59,24 @@ def test_invites_accept_happy_path_context(
     body = json.loads(response['body'])
     assert body['ok'] is True
     assert body['senderEmail'] == "alice@example.com"
-    mock_create_fs.assert_called_once_with("alice@example.com", "bob@example.com")
+    mock_decline.assert_called_once_with("ABCDEFGH", "bob@example.com")
 
 
 # ============================================
 # Legacy body-fallback path (pre-migration clients)
 # ============================================
 
-@patch('lambdas.invites_accept.handler.create_accepted_friendship')
-@patch('lambdas.invites_accept.handler.list_all_friends_for_user')
-@patch('lambdas.invites_accept.handler.consume_invite')
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_happy_path_fallback(
-    mock_get, mock_consume, mock_friends, mock_create_fs, mock_context, legacy_event
+@patch('lambdas.invites_decline.handler.decline_invite')
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_happy_path_fallback(
+    mock_get, mock_decline, mock_context, legacy_event
 ):
     mock_get.return_value = {
         "inviteCode": "ABCDEFGH",
         "senderEmail": "alice@example.com",
         "expiresAt": _future_iso(),
     }
-    mock_friends.return_value = []
-    mock_consume.return_value = {"consumedAt": "2026-04-22T12:00:00+00:00"}
-    mock_create_fs.return_value = True
+    mock_decline.return_value = {"consumedAt": "2026-04-22T12:00:00+00:00"}
 
     event = _post_event(
         legacy_event(),
@@ -95,25 +87,25 @@ def test_invites_accept_happy_path_fallback(
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
     assert body['ok'] is True
-    mock_create_fs.assert_called_once_with("alice@example.com", "bob@example.com")
+    mock_decline.assert_called_once_with("ABCDEFGH", "bob@example.com")
 
 
 # ============================================
 # Caller missing entirely -> 401 from helper
 # ============================================
 
-def test_invites_accept_missing_caller(mock_context, legacy_event):
+def test_invites_decline_missing_caller(mock_context, legacy_event):
     event = _post_event(legacy_event(), {"inviteCode": "ABCDEFGH"})
     response = handler(event, mock_context)
     assert response['statusCode'] == 401
 
 
 # ============================================
-# Domain-rule failure cases (caller via context)
+# Domain-rule failure cases
 # ============================================
 
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_not_found(mock_get, mock_context, authorized_event):
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_not_found(mock_get, mock_context, authorized_event):
     mock_get.return_value = None
     event = _post_event(
         authorized_event(email="bob@example.com"),
@@ -123,14 +115,13 @@ def test_invites_accept_not_found(mock_get, mock_context, authorized_event):
     assert response['statusCode'] == 404
 
 
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_already_consumed(mock_get, mock_context, authorized_event):
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_already_consumed(mock_get, mock_context, authorized_event):
     mock_get.return_value = {
         "inviteCode": "ABCDEFGH",
         "senderEmail": "alice@example.com",
         "expiresAt": _future_iso(),
         "consumedAt": "2026-04-21T10:00:00+00:00",
-        "consumedBy": "someone@example.com",
     }
     event = _post_event(
         authorized_event(email="bob@example.com"),
@@ -142,8 +133,8 @@ def test_invites_accept_already_consumed(mock_get, mock_context, authorized_even
     assert body['error']['error_code'] == "INVITE_CONSUMED"
 
 
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_expired(mock_get, mock_context, authorized_event):
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_expired(mock_get, mock_context, authorized_event):
     mock_get.return_value = {
         "inviteCode": "ABCDEFGH",
         "senderEmail": "alice@example.com",
@@ -159,8 +150,8 @@ def test_invites_accept_expired(mock_get, mock_context, authorized_event):
     assert body['error']['error_code'] == "INVITE_EXPIRED"
 
 
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_self_invite(mock_get, mock_context, authorized_event):
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_self_invite(mock_get, mock_context, authorized_event):
     mock_get.return_value = {
         "inviteCode": "ABCDEFGH",
         "senderEmail": "alice@example.com",
@@ -174,42 +165,17 @@ def test_invites_accept_self_invite(mock_get, mock_context, authorized_event):
     assert response['statusCode'] == 400
 
 
-@patch('lambdas.invites_accept.handler.list_all_friends_for_user')
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_already_friends(
-    mock_get, mock_friends, mock_context, authorized_event
+@patch('lambdas.invites_decline.handler.decline_invite')
+@patch('lambdas.invites_decline.handler.get_invite')
+def test_invites_decline_race_conditional_fail(
+    mock_get, mock_decline, mock_context, authorized_event
 ):
     mock_get.return_value = {
         "inviteCode": "ABCDEFGH",
         "senderEmail": "alice@example.com",
         "expiresAt": _future_iso(),
     }
-    mock_friends.return_value = [
-        {"friendEmail": "alice@example.com", "status": "accepted"},
-    ]
-    event = _post_event(
-        authorized_event(email="bob@example.com"),
-        {"inviteCode": "ABCDEFGH"},
-    )
-    response = handler(event, mock_context)
-    assert response['statusCode'] == 409
-    body = json.loads(response['body'])
-    assert body['error']['error_code'] == "ALREADY_FRIENDS"
-
-
-@patch('lambdas.invites_accept.handler.list_all_friends_for_user')
-@patch('lambdas.invites_accept.handler.consume_invite')
-@patch('lambdas.invites_accept.handler.get_invite')
-def test_invites_accept_race_conditional_fail(
-    mock_get, mock_consume, mock_friends, mock_context, authorized_event
-):
-    mock_get.return_value = {
-        "inviteCode": "ABCDEFGH",
-        "senderEmail": "alice@example.com",
-        "expiresAt": _future_iso(),
-    }
-    mock_friends.return_value = []
-    mock_consume.side_effect = ClientError(
+    mock_decline.side_effect = ClientError(
         {"Error": {"Code": "ConditionalCheckFailedException", "Message": "consumed"}},
         "UpdateItem",
     )
@@ -222,3 +188,9 @@ def test_invites_accept_race_conditional_fail(
     assert response['statusCode'] == 410
     body = json.loads(response['body'])
     assert body['error']['error_code'] == "INVITE_UNAVAILABLE"
+
+
+def test_invites_decline_missing_invite_code(mock_context, authorized_event):
+    event = _post_event(authorized_event(email="bob@example.com"), {})
+    response = handler(event, mock_context)
+    assert response['statusCode'] == 400
