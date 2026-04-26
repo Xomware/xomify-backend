@@ -8,16 +8,18 @@ from unittest.mock import patch, AsyncMock
 from lambdas.friends_profile.handler import handler
 
 
+@patch('lambdas.friends_profile.handler.count_shares_for_user')
 @patch('lambdas.friends_profile.handler.get_user_public_playlists')
 @patch('lambdas.friends_profile.handler.get_user_top_items')
 @patch('lambdas.friends_profile.handler.get_user_table_data')
-def test_friends_profile_success(mock_get_user, mock_get_top_items, mock_get_playlists, mock_context, api_gateway_event, sample_user, sample_top_items):
+def test_friends_profile_success(mock_get_user, mock_get_top_items, mock_get_playlists, mock_count, mock_context, api_gateway_event, sample_user, sample_top_items):
     """Test successful friend profile retrieval"""
     # Setup
     mock_get_user.return_value = sample_user
     # Mock the async coroutines
     mock_get_top_items.return_value = sample_top_items
     mock_get_playlists.return_value = []
+    mock_count.return_value = 0
 
     event = {
         **api_gateway_event,
@@ -59,3 +61,72 @@ def test_friends_profile_missing_email(mock_get_user, mock_get_top_items, mock_g
 
     # Assert
     assert response['statusCode'] == 400
+
+
+# --------------------------------------------------------------------
+# shareCount + playlistCount regression
+# --------------------------------------------------------------------
+# Bug repro: iOS Profile header expects `shareCount` (and falls back to
+# 3 stats when absent — see the ios-profile-redesign-contract). We add
+# `shareCount` and `playlistCount` so the friend profile header renders
+# the full 4-stat row. shareCount comes from a Select=COUNT GSI query;
+# playlistCount mirrors the length of the public-playlists payload.
+@patch('lambdas.friends_profile.handler.count_shares_for_user')
+@patch('lambdas.friends_profile.handler.get_user_public_playlists')
+@patch('lambdas.friends_profile.handler.get_user_top_items')
+@patch('lambdas.friends_profile.handler.get_user_table_data')
+def test_friends_profile_includes_share_and_playlist_counts(
+    mock_get_user, mock_get_top_items, mock_get_playlists, mock_count,
+    mock_context, api_gateway_event, sample_user, sample_top_items,
+):
+    mock_get_user.return_value = sample_user
+    mock_get_top_items.return_value = sample_top_items
+    mock_get_playlists.return_value = [
+        {"id": "p1", "name": "Vibes"},
+        {"id": "p2", "name": "Hype"},
+    ]
+    mock_count.return_value = 7
+
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/friends/profile",
+        "queryStringParameters": {"friendEmail": "friend@example.com"},
+    }
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['shareCount'] == 7
+    assert body['playlistCount'] == 2
+    mock_count.assert_called_once_with("friend@example.com")
+
+
+@patch('lambdas.friends_profile.handler.count_shares_for_user')
+@patch('lambdas.friends_profile.handler.get_user_public_playlists')
+@patch('lambdas.friends_profile.handler.get_user_top_items')
+@patch('lambdas.friends_profile.handler.get_user_table_data')
+def test_friends_profile_share_count_failure_does_not_500(
+    mock_get_user, mock_get_top_items, mock_get_playlists, mock_count,
+    mock_context, api_gateway_event, sample_user, sample_top_items,
+):
+    """If the GSI count scan fails, profile still loads sans shareCount."""
+    mock_get_user.return_value = sample_user
+    mock_get_top_items.return_value = sample_top_items
+    mock_get_playlists.return_value = []
+    mock_count.side_effect = RuntimeError("DDB throttled")
+
+    event = {
+        **api_gateway_event,
+        "httpMethod": "GET",
+        "path": "/friends/profile",
+        "queryStringParameters": {"friendEmail": "friend@example.com"},
+    }
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    # Field omitted on lookup failure — iOS treats absence as "unknown".
+    assert 'shareCount' not in body
+    # playlistCount still present (derived from playlists list length).
+    assert body['playlistCount'] == 0

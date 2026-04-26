@@ -89,6 +89,38 @@ def test_happy_path_with_profiles_and_cursor(
     assert payload["comments"][1]["displayName"] == "Bob"
 
 
+# --------------------------------------------------------------------
+# Empty-thread regression
+# --------------------------------------------------------------------
+# Bug repro: TestFlight users hit /shares/comments on a freshly-created
+# share (zero comments yet) and got a 500. The expected response shape
+# for an empty thread is `{"comments": [], "nextBefore": null}`. This
+# test pins that contract — if we ever regress on empty-list handling,
+# the iOS client breaks open-on-share.
+@patch("lambdas.shares_comments_list.handler.batch_get_users")
+@patch("lambdas.shares_comments_list.handler.list_comments")
+@patch("lambdas.shares_comments_list.handler.get_share")
+def test_empty_thread_returns_empty_list_not_500(
+    mock_get_share, mock_list, mock_users, mock_context, api_gateway_event
+):
+    mock_get_share.return_value = _share()
+    mock_list.return_value = ([], None)
+
+    response = handler(
+        _event(api_gateway_event, {
+            "email": "viewer@example.com",
+            "shareId": "share-1",
+        }),
+        mock_context,
+    )
+
+    assert response["statusCode"] == 200
+    payload = json.loads(response["body"])
+    assert payload == {"comments": [], "nextBefore": None}
+    # Hydrate should not be invoked when there are no authors to look up.
+    mock_users.assert_not_called()
+
+
 # ------------------------------------------------------------------ Validation
 @patch("lambdas.shares_comments_list.handler.list_comments")
 @patch("lambdas.shares_comments_list.handler.get_share")
