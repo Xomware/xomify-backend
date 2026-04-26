@@ -195,6 +195,41 @@ def delete_friends(email: str, request_email: str):
 
 
 # ============================================
+# Are Two Users Accepted Friends?
+# ============================================
+def are_users_friends(email: str, other_email: str) -> bool:
+    """Return True iff ``email`` and ``other_email`` have an accepted friendship.
+
+    Uses a direct GetItem on the base table (PK=email, SK=friendEmail) so
+    this stays cheap — no scan, no extra GSI round-trip. We intentionally
+    only check the caller's row: rows are written symmetrically by
+    ``accept_friend_request`` / ``create_accepted_friendship`` so a single
+    read is sufficient. If the caller's row is missing or not in the
+    ``accepted`` state, the relationship doesn't count for visibility
+    gates.
+
+    Returns False on the same-email case (callers should special-case
+    self-access before calling this).
+    """
+    if not email or not other_email or email == other_email:
+        return False
+    try:
+        table = dynamodb.Table(FRIENDSHIPS_TABLE_NAME)
+        res = table.get_item(Key={"email": email, "friendEmail": other_email})
+        item = res.get("Item")
+        if not item:
+            return False
+        return item.get("status") == "accepted"
+    except Exception as err:
+        log.error(f"are_users_friends failed for {email}/{other_email}: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="are_users_friends",
+            table=FRIENDSHIPS_TABLE_NAME,
+        )
+
+
+# ============================================
 # Create Accepted Friendship (from invite flow)
 # ============================================
 def create_accepted_friendship(sender_email: str, recipient_email: str):
