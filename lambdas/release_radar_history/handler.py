@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
+from lambdas.common.utility_helpers import success_response, get_query_params, get_caller_email
 from lambdas.common.release_radar_dynamo import (
     get_user_release_radar_history,
     get_week_key,
@@ -95,11 +95,10 @@ def group_releases(releases: list) -> list:
 
 
 @handle_errors(HANDLER)
-def handler(event, context):
-    params = get_query_params(event)
-    require_fields(params, 'email')
+def handler(event: dict, context) -> dict:
+    email: str = get_caller_email(event)
 
-    email = params.get('email')
+    params = get_query_params(event)
     limit = int(params.get('limit', 26))
 
     weeks = get_user_release_radar_history(email, limit=limit)
