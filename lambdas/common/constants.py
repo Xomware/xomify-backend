@@ -31,6 +31,7 @@ SHARE_COMMENTS_TABLE_NAME = os.environ.get('SHARE_COMMENTS_TABLE_NAME', '')
 SHARE_REACTIONS_TABLE_NAME = os.environ.get('SHARE_REACTIONS_TABLE_NAME', '')
 INVITES_TABLE_NAME = os.environ.get('INVITES_TABLE_NAME', '')
 DEVICE_TOKENS_TABLE_NAME = os.environ.get('DEVICE_TOKENS_TABLE_NAME', '')
+TOP_ITEMS_CACHE_TABLE_NAME = os.environ.get('TOP_ITEMS_CACHE_TABLE_NAME', '')
 
 # Cross-lambda invocation (backend-interactions-and-notifications sub-feature)
 NOTIFICATIONS_SEND_FUNCTION_NAME = os.environ.get('NOTIFICATIONS_SEND_FUNCTION_NAME', '')

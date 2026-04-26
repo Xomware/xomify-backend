@@ -20,10 +20,11 @@ Each Lambda handles exactly ONE route or cron job:
 - `friends_reject` → POST /friends/reject
 - `friends_remove` → DELETE /friends/remove
 
-#### User API (3 lambdas)
+#### User API (4 lambdas)
 - `user_get` → GET /user/user-table
 - `user_update` → POST /user/user-table
 - `user_all` → GET /user/all
+- `user_top_items` → GET /user/top-items (live top tracks/artists/genres, daily DDB cache)
 
 #### Wrapped API (4 lambdas)
 - `wrapped_data_get` → GET /wrapped/data
