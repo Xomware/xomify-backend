@@ -8,8 +8,10 @@ the invite is still outstanding (not yet consumed, not yet expired). The
 iOS Friends screen uses this to show "your outstanding invites" so the user
 can manage / resend them.
 
-Query params:
-    email (required) - the caller's email, matched against senderEmail
+Caller identity:
+    Sourced from the authorizer context (per-user JWT). Falls back to
+    `queryStringParameters.email` during the Track 0 -> Track 1 migration
+    window so legacy static-token clients still work.
 
 Response:
     {
@@ -24,8 +26,7 @@ from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
 from lambdas.common.utility_helpers import (
     success_response,
-    get_query_params,
-    require_fields,
+    get_caller_email,
 )
 from lambdas.common.invites_dynamo import list_invites_by_sender
 from lambdas.common.constants import INVITE_URL_TEMPLATE
@@ -37,10 +38,10 @@ HANDLER = "invites_pending"
 
 @handle_errors(HANDLER)
 def handler(event, context):
-    params = get_query_params(event)
-    require_fields(params, "email")
-
-    email = params.get("email")
+    # Caller identity comes from the authorizer context (per-user JWT). During
+    # the Track 0 -> Track 1 migration window the helper falls back to the
+    # query-string `email` so legacy static-token clients still work.
+    email = get_caller_email(event)
 
     log.info(f"Listing pending (outstanding) invites for {email}")
     invites = list_invites_by_sender(email, active_only=True)

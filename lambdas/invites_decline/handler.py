@@ -3,9 +3,12 @@ POST /invites/decline - Atomically decline (no-op consume) an invite code.
 
 Body:
     {
-        "email":      "decliner@...",  # who is declining
         "inviteCode": "<code>"
     }
+
+Caller identity (the decliner) is sourced from the authorizer context
+(per-user JWT). Falls back to body / query-string `email` during the Track 0
+-> Track 1 migration window so legacy static-token clients still work.
 
 Mirrors the invites_accept consume latch so a declined code cannot be
 accepted later, and an accepted code cannot be declined afterwards.
@@ -25,7 +28,12 @@ from lambdas.common.errors import (
     XomifyError,
     DynamoDBError,
 )
-from lambdas.common.utility_helpers import success_response, parse_body, require_fields
+from lambdas.common.utility_helpers import (
+    success_response,
+    parse_body,
+    require_fields,
+    get_caller_email,
+)
 from lambdas.common.invites_dynamo import get_invite, decline_invite
 
 log = get_logger(__file__)
@@ -48,9 +56,12 @@ def _parse_iso(ts: str | None) -> datetime | None:
 @handle_errors(HANDLER)
 def handler(event, context):
     body = parse_body(event)
-    require_fields(body, "email", "inviteCode")
+    require_fields(body, "inviteCode")
 
-    email = body.get("email")
+    # Caller identity comes from the authorizer context (per-user JWT). During
+    # the Track 0 -> Track 1 migration window the helper falls back to the
+    # body/query-string `email` so legacy static-token clients still work.
+    email = get_caller_email(event)
     invite_code = body.get("inviteCode")
 
     log.info(f"User {email} declining invite {invite_code}")
