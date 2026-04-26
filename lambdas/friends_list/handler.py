@@ -4,7 +4,7 @@ GET /friends/list - Get user's friends list with counts
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
-from lambdas.common.utility_helpers import success_response, get_query_params, require_fields
+from lambdas.common.utility_helpers import success_response, get_caller_email
 from lambdas.common.friendships_dynamo import list_all_friends_for_user
 
 log = get_logger(__file__)
@@ -14,10 +14,7 @@ HANDLER = 'friends_list'
 
 @handle_errors(HANDLER)
 def handler(event, context):
-    params = get_query_params(event)
-    require_fields(params, 'email')
-
-    email = params.get('email')
+    email = get_caller_email(event)
 
     log.info(f"Listing all friends for user {email}")
     friends = list_all_friends_for_user(email)
