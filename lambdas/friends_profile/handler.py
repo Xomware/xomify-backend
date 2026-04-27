@@ -18,6 +18,7 @@ from lambdas.common.utility_helpers import (
 )
 from lambdas.common.dynamo_helpers import get_user_table_data
 from lambdas.common.friends_profile_helper import get_user_top_items, get_user_public_playlists
+from lambdas.common.friendships_dynamo import list_all_friends_for_user
 from lambdas.common.shares_dynamo import count_shares_for_user
 from lambdas.common.user_likes_dynamo import get_likes_settings
 
@@ -61,6 +62,21 @@ def _safe_likes_settings(friend_email: str) -> dict | None:
         return None
 
 
+def _safe_friends_count(friend_email: str) -> int | None:
+    """Return number of accepted friendships for friend, or None on failure.
+
+    Mirrors `_safe_share_count` semantics — failures degrade the field to
+    absent rather than 500ing the whole profile. Counts only `accepted`
+    rows so pending/blocked/requested don't inflate the number.
+    """
+    try:
+        rows = list_all_friends_for_user(friend_email) or []
+        return sum(1 for r in rows if r.get('status') == 'accepted')
+    except Exception as err:
+        log.warning(f"friendsCount lookup failed for {friend_email}: {err}")
+        return None
+
+
 def _safe_caller_email(event) -> str | None:
     """Resolve the caller's email or return None if it can't be determined.
 
@@ -93,6 +109,7 @@ def handler(event, context):
     friend_playlists = result['playlists']
 
     share_count = _safe_share_count(friend_email)
+    friends_count = _safe_friends_count(friend_email)
     playlist_count = len(friend_playlists) if friend_playlists is not None else None
 
     payload = {
@@ -108,6 +125,8 @@ def handler(event, context):
     }
     if share_count is not None:
         payload['shareCount'] = share_count
+    if friends_count is not None:
+        payload['friendsCount'] = friends_count
 
     # likesCount enrichment — honour the target's privacy flag. We only
     # include the field when:
