@@ -25,6 +25,7 @@ Flow:
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 import boto3
@@ -56,17 +57,22 @@ QUEUE_THRESHOLD = 3
 _lambda_client = boto3.client("lambda", region_name="us-east-1")
 
 
-def _coerce_rating(raw: Any) -> float:
+def _coerce_rating(raw: Any) -> Decimal:
+    """Coerce the body's rating to a Decimal — boto3 DynamoDB rejects Python
+    floats outright (raises 'Float types are not supported'). Decimal works
+    for both integer and fractional star values."""
     try:
-        rating = float(raw)
-    except (TypeError, ValueError):
+        # str(raw) avoids the float-binary-imprecision warning Decimal raises
+        # when given a float directly.
+        rating = Decimal(str(raw))
+    except (TypeError, ValueError, InvalidOperation):
         raise ValidationError(
             message="rating must be a number between 1 and 5",
             handler=HANDLER,
             function="handler",
             field="rating",
         )
-    if rating < 1.0 or rating > 5.0:
+    if rating < Decimal("1") or rating > Decimal("5"):
         raise ValidationError(
             message="rating must be between 1 and 5",
             handler=HANDLER,
@@ -177,7 +183,7 @@ def handler(event, context):
     if action.startswith("un"):
         clear_reaction(share_id, email, action)
     else:
-        rating: Optional[float] = None
+        rating: Optional[Decimal] = None
         if action == "rated":
             rating = _coerce_rating(raw_rating)
         set_reaction(share_id, email, shared_by=shared_by, action=action, rating=rating)
