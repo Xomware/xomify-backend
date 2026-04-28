@@ -257,3 +257,56 @@ def test_shares_create_legacy_email_in_body_still_works(
     response = handler(event, mock_context)
     assert response['statusCode'] == 200
     assert mock_create.call_args.kwargs['email'] == "legacy@example.com"
+
+
+# ------------------------------------------------------------
+# Rate-on-share
+# ------------------------------------------------------------
+
+SHARE_RESULT = {
+    "shareId": "share-ros-1",
+    "createdAt": "2026-04-26T12:00:00+00:00",
+    "groupIds": [],
+    "public": True,
+}
+
+
+@patch('lambdas.shares_create.handler.upsert_track_rating')
+@patch('lambdas.shares_create.handler.create_share')
+def test_shares_create_without_rating_does_not_call_upsert(
+    mock_create, mock_upsert, mock_context, authorized_event
+):
+    """Share without `rating` field still works; upsert is never called."""
+    mock_create.return_value = SHARE_RESULT
+    response = handler(_event(authorized_event, VALID_BODY), mock_context)
+    assert response['statusCode'] == 200
+    mock_upsert.assert_not_called()
+
+
+@patch('lambdas.shares_create.handler.upsert_track_rating')
+@patch('lambdas.shares_create.handler.create_share')
+def test_shares_create_with_valid_rating_writes_both_rows(
+    mock_create, mock_upsert, mock_context, authorized_event
+):
+    """Share with rating=4 writes the share row and then calls upsert_track_rating."""
+    mock_create.return_value = SHARE_RESULT
+    body = {**VALID_BODY, "rating": 4}
+    response = handler(_event(authorized_event, body), mock_context)
+    assert response['statusCode'] == 200
+    mock_upsert.assert_called_once()
+    call_kwargs = mock_upsert.call_args.kwargs
+    assert call_kwargs['rating'] == 4
+    assert call_kwargs['track_id'] == VALID_BODY['trackId']
+
+
+@patch('lambdas.shares_create.handler.upsert_track_rating')
+@patch('lambdas.shares_create.handler.create_share')
+def test_shares_create_with_out_of_range_rating_ignores_rating(
+    mock_create, mock_upsert, mock_context, authorized_event
+):
+    """Share with rating=99 writes share only; upsert is not called (silently ignored)."""
+    mock_create.return_value = SHARE_RESULT
+    body = {**VALID_BODY, "rating": 99}
+    response = handler(_event(authorized_event, body), mock_context)
+    assert response['statusCode'] == 200
+    mock_upsert.assert_not_called()
