@@ -226,3 +226,69 @@ def test_shares_feed_missing_caller_identity_returns_401(
     response = handler(event, mock_context)
     assert response['statusCode'] == 401
     mock_friends.assert_not_called()
+
+
+# ------------------------------------------------------------------ Group pagination fix (B3)
+@patch('lambdas.shares_feed.handler.list_members_of_group')
+@patch('lambdas.shares_feed.handler.query_feed_for_emails')
+@patch('lambdas.shares_feed.handler.list_all_friends_for_user')
+def test_shares_feed_group_pagination_returns_limit_when_sparse(
+    mock_friends, mock_query, mock_members, mock_context, authorized_event
+):
+    """Group feed must paginate past non-matching rows to fill the requested limit.
+
+    Setup: limit=2 requested. Each page has 8 rows but only 1 matches the group.
+    The handler must loop across two pages to collect 2 group-targeted rows.
+    """
+    mock_friends.return_value = [
+        {"friendEmail": "alice@example.com", "status": "accepted"},
+    ]
+    mock_members.return_value = [
+        {"email": "alice@example.com"},
+        {"email": "me@example.com"},
+    ]
+
+    def _make_share(share_id: str, ts: str, in_group: bool) -> dict:
+        row = {"shareId": share_id, "email": "alice@example.com", "createdAt": ts}
+        if in_group:
+            row["groupIds"] = ["g1"]
+            row["public"] = False
+        return row
+
+    # Two pages. First page has 1 group match among 8 items. Second page also 1.
+    # overscan = limit*4 = 8; each page is exactly 8 rows (== overscan) so the
+    # loop knows more data might exist and continues.
+    page1 = [
+        _make_share("match-1", "2026-04-22T12:00:00+00:00", True),
+        *[_make_share(f"p1-miss-{i}", f"2026-04-22T11:0{i}:00+00:00", False) for i in range(7)],
+    ]
+    page2 = [
+        _make_share("match-2", "2026-04-22T10:00:00+00:00", True),
+        *[_make_share(f"p2-miss-{i}", f"2026-04-22T09:0{i}:00+00:00", False) for i in range(7)],
+    ]
+
+    call_count = 0
+
+    def _side_effect(emails, limit, before=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return page1
+        if call_count == 2:
+            return page2
+        return []
+
+    mock_query.side_effect = _side_effect
+
+    response = handler(
+        _event(authorized_event, {"groupId": "g1", "limit": "2"}),
+        mock_context,
+    )
+
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    ids = [s['shareId'] for s in body['shares']]
+    # Must return exactly the 2 group-targeted shares, no misses
+    assert ids == ["match-1", "match-2"]
+    # Needed 2 iterations to collect 2 results
+    assert call_count == 2
