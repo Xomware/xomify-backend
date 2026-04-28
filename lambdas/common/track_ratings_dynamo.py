@@ -72,12 +72,12 @@ def get_single_track_rating_for_user(email: str, track_id: str):
             }
         )
 
-        items = response["Items"]
-        if len(items) < 0:
-            log.warning(f"No rating found for email {email} and track id {track_id}")
+        item = response.get("Item")
+        if not item:
+            log.info(f"No rating found for email {email} and track id {track_id}")
             return {}
-        
-        return items[0]
+
+        return item
 
     except Exception as err:
         log.error(f"Get Single Track Rating for User failed: {err}")
@@ -142,19 +142,10 @@ def upsert_track_rating(
             },
             UpdateExpression=update_expression,
             ExpressionAttributeValues=expression_values,
-            ConditionExpression=(
-                "attribute_not_exists(rating) OR rating <> :rating"
-            ),
             ReturnValues="ALL_NEW",
         )
 
         return response["Attributes"]
-
-    except table.meta.client.exceptions.ConditionalCheckFailedException:
-        log.info(
-            f"Rating unchanged for email {email} and trackId {track_id}; skipping update"
-        )
-        return {}
 
     except Exception as err:
         log.error(f"Upsert Track Rating failed: {err}")
