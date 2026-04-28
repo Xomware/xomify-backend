@@ -9,6 +9,13 @@ Multi-target semantics (v2):
 - `public=False` with an empty `groupIds` is invalid (no target) -> 400.
 - Every entry in `groupIds` must reference a group the caller is a member
   of; non-members get a 403.
+
+Rate-on-share (v3):
+- Callers may include an optional `rating` field (int, 1-5) in the request
+  body. When present and in range, the rating is written to the track
+  ratings table after the share row is created. The rating write is
+  best-effort: failures are logged at WARN and do NOT fail the share.
+  Values outside 1-5 are silently ignored (no error).
 """
 
 from lambdas.common.logger import get_logger
@@ -21,6 +28,7 @@ from lambdas.common.utility_helpers import (
 )
 from lambdas.common.shares_dynamo import create_share
 from lambdas.common.group_members_dynamo import is_member_of_group
+from lambdas.common.track_ratings_dynamo import upsert_track_rating
 
 log = get_logger(__file__)
 
@@ -111,6 +119,7 @@ def handler(event, context):
     caption = body.get('caption')
     mood_tag = body.get('moodTag')
     genre_tags = body.get('genreTags')
+    raw_rating = body.get('rating')
 
     # Multi-target fields — default to legacy "public only" share.
     public = _coerce_public(body.get('public', True))
@@ -179,4 +188,29 @@ def handler(event, context):
     )
 
     log.info(f"Share {result['shareId']} created successfully")
+
+    # Best-effort rating write. Only attempted when rating is a valid int 1-5.
+    # Values outside that range are silently ignored. Failures are logged at
+    # WARN but do NOT fail the share response.
+    if isinstance(raw_rating, int) and 1 <= raw_rating <= 5:
+        try:
+            upsert_track_rating(
+                email=email,
+                track_id=track_id,
+                rating=raw_rating,
+                track_name=track_name,
+                artist_name=artist_name,
+                album_art=album_art_url or "",
+                album_name=album_name,
+                rating_context="share",
+            )
+            log.info(
+                f"Rate-on-share: wrote rating {raw_rating} for track {track_id} "
+                f"(share {result['shareId']})"
+            )
+        except Exception as exc:
+            log.warning(
+                f"Rate-on-share: failed to write rating for share {result['shareId']}: {exc}"
+            )
+
     return success_response(result)
