@@ -180,19 +180,20 @@ def list_shares_for_user(
     try:
         table = dynamodb.Table(SHARES_TABLE_NAME)
 
+        key_condition = Key("email").eq(email)
+        if before:
+            # `before` is a cursor on createdAt — return rows strictly older.
+            # We can't use ExclusiveStartKey here because we don't have the
+            # base table's PK (shareId) for the cursor row; DynamoDB rejects
+            # GSI pagination keys missing the base PK with ValidationException.
+            key_condition = key_condition & Key("createdAt").lt(before)
+
         query_kwargs: dict[str, Any] = {
             "IndexName": SHARES_EMAIL_INDEX,
-            "KeyConditionExpression": Key("email").eq(email),
+            "KeyConditionExpression": key_condition,
             "ScanIndexForward": False,
             "Limit": limit,
         }
-
-        if before:
-            # ExclusiveStartKey needs all GSI + base-table keys
-            query_kwargs["ExclusiveStartKey"] = {
-                "email": email,
-                "createdAt": before,
-            }
 
         response = table.query(**query_kwargs)
         items = response.get("Items", [])
