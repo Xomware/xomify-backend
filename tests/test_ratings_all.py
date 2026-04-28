@@ -49,7 +49,7 @@ def test_ratings_all_uses_caller_context(
     assert response['statusCode'] == 200
     mock_list.assert_called_once_with("alice@example.com")
     body = json.loads(response['body'])
-    assert body['totalRatings'] == 2
+    assert body['totalCount'] == 2
     assert body['ratings'] == SAMPLE_RATINGS
 
 
@@ -68,7 +68,7 @@ def test_ratings_all_falls_back_to_query_param(
     assert response['statusCode'] == 200
     mock_list.assert_called_once_with("legacy@example.com")
     body = json.loads(response['body'])
-    assert body['totalRatings'] == 0
+    assert body['totalCount'] == 0
 
 
 @patch('lambdas.ratings_all.handler.list_all_track_ratings_for_user')

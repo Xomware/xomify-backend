@@ -130,14 +130,35 @@ def handler(event, context):
     if not feed_emails:
         return success_response({'shares': [], 'nextBefore': None})
 
-    shares = query_feed_for_emails(sorted(feed_emails), limit=limit, before=before)
+    sorted_emails = sorted(feed_emails)
 
-    # Visibility filter — applied AFTER the fan-out so pagination cursors
-    # remain stable against createdAt. Public feed hides group-only rows;
-    # group feed keeps only rows whose groupIds contain the requested group.
     if group_id:
-        shares = [s for s in shares if _row_targets_group(s, group_id)]
+        # Group-filtered feeds: paginate until we have `limit` matching rows or
+        # the DDB cursor is exhausted. Each iteration uses a 4x overscan to
+        # reduce the number of round-trips needed when group matches are sparse.
+        overscan = limit * 4
+        filtered: list[dict] = []
+        cursor = before
+        MAX_ITERATIONS = 10  # safety cap to prevent runaway loops
+        iterations = 0
+        while len(filtered) < limit and iterations < MAX_ITERATIONS:
+            iterations += 1
+            page = query_feed_for_emails(sorted_emails, limit=overscan, before=cursor)
+            if not page:
+                break  # DDB exhausted
+            for s in page:
+                if _row_targets_group(s, group_id):
+                    filtered.append(s)
+                    if len(filtered) >= limit:
+                        break
+            # Advance cursor to oldest item in this page for the next iteration
+            cursor = page[-1].get('createdAt')
+            if len(page) < overscan:
+                break  # DDB returned less than we asked for — no more data
+        shares = filtered[:limit]
+        log.info(f"Group feed: {len(shares)} matches after {iterations} iteration(s)")
     else:
+        shares = query_feed_for_emails(sorted_emails, limit=limit, before=before)
         shares = [s for s in shares if _is_public_row(s)]
 
     shares = [_enrich(s, email) for s in shares]

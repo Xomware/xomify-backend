@@ -21,5 +21,5 @@ def handler(event, context):
 
     return success_response({
         'ratings': ratings,
-        'totalRatings': len(ratings)
+        'totalCount': len(ratings)
     })
