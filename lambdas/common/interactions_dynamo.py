@@ -268,8 +268,11 @@ def build_enrichment(
     invisible on the feed card after refresh.
     """
     items = list_reactions_for_share(share_id)
-    queued_count = 0
-    rated_count = 0
+    # Counts are "people other than the viewer" — the iOS card surfaces the
+    # viewer's own state separately (myRating chip, viewerHasQueued flag), so
+    # double-counting the viewer in "X rated" / "X queued" is misleading.
+    distinct_queuers: set[str] = set()
+    distinct_raters: set[str] = set()
     viewer_has_queued = False
     viewer_rating: Optional[float] = None
     sharer_rating: Optional[float] = None
@@ -277,10 +280,10 @@ def build_enrichment(
     for item in items:
         email = item.get("email")
         shared_by = item.get("sharedBy")
-        if item.get("queued"):
-            queued_count += 1
-        if item.get("rated"):
-            rated_count += 1
+        if item.get("queued") and email and email != viewer_email:
+            distinct_queuers.add(email)
+        if item.get("rated") and email and email != viewer_email:
+            distinct_raters.add(email)
         if email == viewer_email:
             viewer_has_queued = bool(item.get("queued"))
             rating = item.get("rating")
@@ -305,14 +308,19 @@ def build_enrichment(
             viewer_rating = _track_rating_value(viewer_email, track_id)
         if sharer_rating is None and sharer_email:
             sharer_rating = _track_rating_value(sharer_email, track_id)
-        if rated_count == 0 and (viewer_rating is not None or sharer_rating is not None):
-            rated_count = sum(
-                1 for v in (viewer_rating, sharer_rating) if v is not None
-            )
+        # Sharer rated via /ratings/publish — surface them in distinct raters
+        # so the count matches what shares_detail will list (author always
+        # included, viewer always excluded).
+        if (
+            sharer_rating is not None
+            and sharer_email
+            and sharer_email != viewer_email
+        ):
+            distinct_raters.add(sharer_email)
 
     return {
-        "queuedCount": queued_count,
-        "ratedCount": rated_count,
+        "queuedCount": len(distinct_queuers),
+        "ratedCount": len(distinct_raters),
         "viewerHasQueued": viewer_has_queued,
         "viewerRating": viewer_rating,
         "sharerRating": sharer_rating,
