@@ -86,3 +86,82 @@ def test_no_track_id_skips_fallback(mock_list, mock_track):
     assert result["viewerRating"] is None
     assert result["sharerRating"] is None
     mock_track.assert_not_called()
+
+
+@patch('lambdas.common.interactions_dynamo._track_rating_value')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_own_post_does_not_double_count_viewer_as_sharer(mock_list, mock_track):
+    """When viewer == sharer (own post) and the rating only lives in
+    track_ratings, ratedCount must not double-count the same person."""
+    mock_list.return_value = []
+    mock_track.return_value = 4.0  # both lookups hit the same Dom rating
+
+    result = build_enrichment(
+        "share-1",
+        "dom@x.com",
+        track_id="track-1",
+        sharer_email="dom@x.com",  # own post
+    )
+
+    assert result["viewerRating"] == 4.0
+    assert result["sharerRating"] == 4.0
+    assert result["ratedCount"] == 0  # viewer excluded; sharer == viewer
+
+
+@patch('lambdas.common.interactions_dynamo._track_rating_value')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_rated_count_excludes_viewer(mock_list, mock_track):
+    """The viewer's own rating row never inflates ratedCount — the iOS
+    card surfaces myRating separately, so 'X rated' means others."""
+    mock_list.return_value = [
+        {"email": "viewer@x.com", "rated": True, "rating": 3},
+        {"email": "friend@x.com", "rated": True, "rating": 5},
+    ]
+    mock_track.return_value = None
+
+    result = build_enrichment(
+        "share-1",
+        "viewer@x.com",
+        track_id="track-1",
+        sharer_email="author@x.com",
+    )
+
+    assert result["ratedCount"] == 1  # only friend@x.com counts
+
+
+@patch('lambdas.common.interactions_dynamo._track_rating_value')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_queued_count_excludes_viewer(mock_list, mock_track):
+    """Same exclusion rule for queuedCount — viewerHasQueued is the viewer's
+    own state; the count is for everyone else."""
+    mock_list.return_value = [
+        {"email": "viewer@x.com", "queued": True},
+        {"email": "friend1@x.com", "queued": True},
+        {"email": "friend2@x.com", "queued": True},
+    ]
+    mock_track.return_value = None
+
+    result = build_enrichment("share-1", "viewer@x.com")
+
+    assert result["queuedCount"] == 2
+    assert result["viewerHasQueued"] is True
+
+
+@patch('lambdas.common.interactions_dynamo._track_rating_value')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_sharer_rating_via_fallback_adds_to_rated_count(mock_list, mock_track):
+    """A sharer who rated only via /ratings/publish (no interactions row)
+    should still show up in ratedCount so the count matches what
+    shares_detail's friendRatings list will render."""
+    mock_list.return_value = []
+    mock_track.side_effect = lambda email, track_id: 5.0 if email == "author@x.com" else None
+
+    result = build_enrichment(
+        "share-1",
+        "viewer@x.com",
+        track_id="track-1",
+        sharer_email="author@x.com",
+    )
+
+    assert result["sharerRating"] == 5.0
+    assert result["ratedCount"] == 1  # author counted
