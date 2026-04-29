@@ -29,6 +29,7 @@ from lambdas.common.utility_helpers import (
 from lambdas.common.shares_dynamo import create_share
 from lambdas.common.group_members_dynamo import is_member_of_group
 from lambdas.common.track_ratings_dynamo import upsert_track_rating
+from lambdas.common.share_listeners_dynamo import mark_listened
 
 log = get_logger(__file__)
 
@@ -188,6 +189,22 @@ def handler(event, context):
     )
 
     log.info(f"Share {result['shareId']} created successfully")
+
+    # Auto-mark the author as a listener of their own share. The author
+    # obviously knows the song they just shared, so the share-card UI should
+    # reflect that on day one. Best-effort: failures are logged at WARN but
+    # MUST NOT roll back the share creation.
+    try:
+        mark_listened(result['shareId'], email, source='author_create')
+        log.info(
+            f"Auto-listener: marked author {email} as listener of share "
+            f"{result['shareId']}"
+        )
+    except Exception as exc:
+        log.warning(
+            f"Auto-listener: failed to mark author {email} on share "
+            f"{result['shareId']}: {exc}"
+        )
 
     # Best-effort rating write. Only attempted when rating is a valid int 1-5.
     # Values outside that range are silently ignored. Failures are logged at

@@ -85,6 +85,8 @@ def _enrich(share: dict, viewer_email: str) -> dict:
         share.setdefault('viewerHasQueued', False)
         share.setdefault('viewerRating', None)
         share.setdefault('sharerRating', None)
+        share.setdefault('viewerHasListened', False)
+        share.setdefault('listenerCount', 0)
         return share
     try:
         enrichment = build_enrichment(
@@ -102,6 +104,8 @@ def _enrich(share: dict, viewer_email: str) -> dict:
         share.setdefault('viewerHasQueued', False)
         share.setdefault('viewerRating', None)
         share.setdefault('sharerRating', None)
+        share.setdefault('viewerHasListened', False)
+        share.setdefault('listenerCount', 0)
     return share
 
 
