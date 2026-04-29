@@ -165,3 +165,77 @@ def test_sharer_rating_via_fallback_adds_to_rated_count(mock_list, mock_track):
 
     assert result["sharerRating"] == 5.0
     assert result["ratedCount"] == 1  # author counted
+
+
+# ============================================================================
+# Listener-state surfacing on the enrichment payload (Bug 2 / Bug 3 plumbing).
+# build_enrichment now reads share-listeners and returns viewerHasListened +
+# listenerCount alongside the existing fields.
+# ============================================================================
+@patch('lambdas.common.share_listeners_dynamo.count_listeners')
+@patch('lambdas.common.share_listeners_dynamo.has_listened')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_enrichment_surfaces_listener_state(mock_list, mock_has, mock_count):
+    mock_list.return_value = []
+    mock_has.return_value = True
+    mock_count.return_value = 4
+
+    result = build_enrichment("share-1", "viewer@x.com")
+
+    assert result["viewerHasListened"] is True
+    assert result["listenerCount"] == 4
+    mock_has.assert_called_once_with("share-1", "viewer@x.com")
+    mock_count.assert_called_once_with("share-1")
+
+
+@patch('lambdas.common.share_listeners_dynamo.count_listeners')
+@patch('lambdas.common.share_listeners_dynamo.has_listened')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_enrichment_listener_helpers_default_false_zero(mock_list, mock_has, mock_count):
+    """Empty listener helpers must surface as viewerHasListened=False / listenerCount=0."""
+    mock_list.return_value = []
+    mock_has.return_value = False
+    mock_count.return_value = 0
+
+    result = build_enrichment("share-1", "viewer@x.com")
+
+    assert result["viewerHasListened"] is False
+    assert result["listenerCount"] == 0
+
+
+@patch('lambdas.common.share_listeners_dynamo.count_listeners')
+@patch('lambdas.common.share_listeners_dynamo.has_listened')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_enrichment_listener_helper_failure_is_swallowed(mock_list, mock_has, mock_count):
+    """A listeners-table miss / blow-up must NOT break the rest of enrichment."""
+    mock_list.return_value = []
+    mock_has.side_effect = RuntimeError("listeners ddb down")
+    mock_count.side_effect = RuntimeError("listeners ddb down")
+
+    result = build_enrichment("share-1", "viewer@x.com")
+
+    # Defaults applied gracefully.
+    assert result["viewerHasListened"] is False
+    assert result["listenerCount"] == 0
+    # And the rest of the payload is intact.
+    assert result["queuedCount"] == 0
+    assert result["ratedCount"] == 0
+
+
+@patch('lambdas.common.share_listeners_dynamo.count_listeners')
+@patch('lambdas.common.share_listeners_dynamo.has_listened')
+@patch('lambdas.common.interactions_dynamo.list_reactions_for_share')
+def test_enrichment_skips_listener_check_when_disabled(mock_list, mock_has, mock_count):
+    """Callers that opt out of the listener check don't trigger the extra reads."""
+    mock_list.return_value = []
+
+    result = build_enrichment(
+        "share-1",
+        "viewer@x.com",
+        viewer_listened_check=False,
+    )
+
+    mock_has.assert_not_called()
+    mock_count.assert_not_called()
+    assert result["viewerHasListened"] is False
+    assert result["listenerCount"] == 0

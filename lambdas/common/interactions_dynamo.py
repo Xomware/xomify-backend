@@ -256,9 +256,10 @@ def build_enrichment(
     *,
     track_id: Optional[str] = None,
     sharer_email: Optional[str] = None,
+    viewer_listened_check: bool = True,
 ) -> dict[str, Any]:
     """
-    Inspect all reaction rows for a share and collapse them into the four
+    Inspect all reaction rows for a share and collapse them into the
     counts/flags the iOS feed card needs.
 
     `track_id` and `sharer_email` enable a fallback into the canonical
@@ -266,6 +267,11 @@ def build_enrichment(
     button writes to track-ratings via /ratings/publish without writing
     a share-interactions row, so without this fallback the rating is
     invisible on the feed card after refresh.
+
+    `viewer_listened_check` controls whether we hit the share-listeners
+    table for `viewerHasListened` / `listenerCount`. Callers that don't
+    need the listened-state (e.g. profile views that pre-filter) can
+    pass False to skip the extra GetItem + Query.
     """
     items = list_reactions_for_share(share_id)
     # Counts are "people other than the viewer" — the iOS card surfaces the
@@ -318,12 +324,35 @@ def build_enrichment(
         ):
             distinct_raters.add(sharer_email)
 
+    # Listened-state lookup (separate table — see share_listeners_dynamo).
+    # Wrapped in try/except so a listeners-table miss never breaks the rest
+    # of the enrichment payload (mirrors the track-ratings fallback above).
+    viewer_has_listened = False
+    listener_count = 0
+    if viewer_listened_check:
+        try:
+            from lambdas.common.share_listeners_dynamo import (
+                count_listeners,
+                has_listened,
+            )
+
+            viewer_has_listened = bool(has_listened(share_id, viewer_email))
+            listener_count = int(count_listeners(share_id))
+        except Exception as err:
+            log.warning(
+                f"listener enrichment failed (share={share_id}, viewer={viewer_email}): {err}"
+            )
+            viewer_has_listened = False
+            listener_count = 0
+
     return {
         "queuedCount": len(distinct_queuers),
         "ratedCount": len(distinct_raters),
         "viewerHasQueued": viewer_has_queued,
         "viewerRating": viewer_rating,
         "sharerRating": sharer_rating,
+        "viewerHasListened": viewer_has_listened,
+        "listenerCount": listener_count,
     }
 
 

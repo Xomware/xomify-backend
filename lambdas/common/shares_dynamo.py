@@ -284,6 +284,42 @@ def query_feed_for_emails(
 
 
 # ============================================
+# Scan All Shares (admin / backfill use only)
+# ============================================
+def scan_all_shares(page_size: int = 100):
+    """
+    Yield every share row in the table, page by page.
+
+    This is intended for one-shot admin scripts (e.g. backfilling derived
+    state across the whole shares table) and NOT for request handlers — a
+    full Scan is O(table) and should never run on the hot path.
+
+    Yields lists of share dicts (one list per DDB page) so callers can
+    process and report progress incrementally without buffering the whole
+    table in memory.
+    """
+    try:
+        table = dynamodb.Table(SHARES_TABLE_NAME)
+        kwargs: dict[str, Any] = {"Limit": page_size}
+        while True:
+            response = table.scan(**kwargs)
+            items = response.get("Items", [])
+            if items:
+                yield items
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            kwargs["ExclusiveStartKey"] = last_key
+    except Exception as err:
+        log.error(f"scan_all_shares failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="scan_all_shares",
+            table=SHARES_TABLE_NAME,
+        )
+
+
+# ============================================
 # Threshold Notification Latch (idempotent)
 # ============================================
 def mark_threshold_notified(share_id: str, threshold: int) -> bool:

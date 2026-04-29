@@ -101,6 +101,8 @@ def handler(event, context):
                 share.setdefault('viewerHasQueued', False)
                 share.setdefault('viewerRating', None)
                 share.setdefault('sharerRating', None)
+                share.setdefault('viewerHasListened', False)
+                share.setdefault('listenerCount', 0)
         enriched.append(share)
 
     log.info(f"Returning {len(enriched)} shares for target {target_email}")
