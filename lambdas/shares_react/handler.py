@@ -202,5 +202,10 @@ def handler(event, context):
                     reactor_count=reactor_count,
                 )
 
-    enrichment = build_enrichment(share_id, email)
+    enrichment = build_enrichment(
+        share_id,
+        email,
+        track_id=share.get('trackId') if share else None,
+        sharer_email=(share.get('email') or share.get('sharedBy')) if share else None,
+    )
     return success_response(enrichment)

@@ -250,10 +250,22 @@ def count_interactions_for_share(share_id: str) -> dict:
 # ============================================
 # Enrichment helper (used by shares_feed / shares_user)
 # ============================================
-def build_enrichment(share_id: str, viewer_email: str) -> dict[str, Any]:
+def build_enrichment(
+    share_id: str,
+    viewer_email: str,
+    *,
+    track_id: Optional[str] = None,
+    sharer_email: Optional[str] = None,
+) -> dict[str, Any]:
     """
     Inspect all reaction rows for a share and collapse them into the four
     counts/flags the iOS feed card needs.
+
+    `track_id` and `sharer_email` enable a fallback into the canonical
+    track-ratings table for viewer/sharer ratings -- the feed-card rate
+    button writes to track-ratings via /ratings/publish without writing
+    a share-interactions row, so without this fallback the rating is
+    invisible on the feed card after refresh.
     """
     items = list_reactions_for_share(share_id)
     queued_count = 0
@@ -285,6 +297,19 @@ def build_enrichment(share_id: str, viewer_email: str) -> dict[str, Any]:
                 except (TypeError, ValueError):
                     sharer_rating = None
 
+    # Fallback: when the canonical track-ratings table has a row but the
+    # share-interactions row doesn't carry the rating (writes via
+    # /ratings/publish bypass the interactions table), source from there.
+    if track_id:
+        if viewer_rating is None:
+            viewer_rating = _track_rating_value(viewer_email, track_id)
+        if sharer_rating is None and sharer_email:
+            sharer_rating = _track_rating_value(sharer_email, track_id)
+        if rated_count == 0 and (viewer_rating is not None or sharer_rating is not None):
+            rated_count = sum(
+                1 for v in (viewer_rating, sharer_rating) if v is not None
+            )
+
     return {
         "queuedCount": queued_count,
         "ratedCount": rated_count,
@@ -292,6 +317,25 @@ def build_enrichment(share_id: str, viewer_email: str) -> dict[str, Any]:
         "viewerRating": viewer_rating,
         "sharerRating": sharer_rating,
     }
+
+
+def _track_rating_value(email: str, track_id: str) -> Optional[float]:
+    """Best-effort lookup into the canonical track-ratings table; never raises."""
+    try:
+        from lambdas.common.track_ratings_dynamo import (
+            get_single_track_rating_for_user,
+        )
+
+        row = get_single_track_rating_for_user(email, track_id)
+        if not row:
+            return None
+        rating = row.get("rating")
+        if rating is None:
+            return None
+        return float(rating)
+    except Exception as err:
+        log.warning(f"track-rating fallback failed (email={email}, trackId={track_id}): {err}")
+        return None
 
 
 # ============================================

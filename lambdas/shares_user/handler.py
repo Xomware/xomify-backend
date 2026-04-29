@@ -88,7 +88,12 @@ def handler(event, context):
         share_id = share.get('shareId')
         if share_id:
             try:
-                share.update(build_enrichment(share_id, email))
+                share.update(build_enrichment(
+                    share_id,
+                    email,
+                    track_id=share.get('trackId'),
+                    sharer_email=share.get('email') or share.get('sharedBy'),
+                ))
             except Exception as err:
                 log.warning(f"Profile enrichment failed for share {share_id}: {err}")
                 share.setdefault('queuedCount', 0)
