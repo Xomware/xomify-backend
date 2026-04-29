@@ -87,7 +87,12 @@ def _enrich(share: dict, viewer_email: str) -> dict:
         share.setdefault('sharerRating', None)
         return share
     try:
-        enrichment = build_enrichment(share_id, viewer_email)
+        enrichment = build_enrichment(
+            share_id,
+            viewer_email,
+            track_id=share.get('trackId'),
+            sharer_email=share.get('email') or share.get('sharedBy'),
+        )
         share.update(enrichment)
     except Exception as err:
         # Never let an enrichment miss break the feed.

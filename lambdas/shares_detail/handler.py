@@ -181,7 +181,12 @@ def _enrich_share(share: dict[str, Any], viewer_email: str) -> dict[str, Any]:
         share.setdefault('sharerRating', None)
         return share
     try:
-        share.update(build_enrichment(share_id, viewer_email))
+        share.update(build_enrichment(
+            share_id,
+            viewer_email,
+            track_id=share.get('trackId'),
+            sharer_email=share.get('email') or share.get('sharedBy'),
+        ))
     except Exception as err:
         log.warning(f"Detail enrichment failed for share {share_id}: {err}")
         share.setdefault('queuedCount', 0)
