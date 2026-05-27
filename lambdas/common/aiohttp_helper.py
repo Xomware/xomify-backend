@@ -253,6 +253,74 @@ async def delete_json(
         )
 
 
+async def put_json(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict = None,
+    json: dict = None,
+    retry_count: int = 0
+) -> dict:
+    """
+    PUT JSON to URL with rate limit handling.
+    """
+    try:
+        rate_event = _get_rate_limit_event()
+        await rate_event.wait()
+
+        async with session.put(url, headers=headers, json=json) as resp:
+            if resp.status == 429:
+                retry_after = int(resp.headers.get('Retry-After', 1))
+                log.warning(f"Rate limited on PUT {url}. Waiting {retry_after}s...")
+
+                rate_event.clear()
+                await asyncio.sleep(retry_after + 1)
+                rate_event.set()
+
+                if retry_count < MAX_RETRIES:
+                    return await put_json(session, url, headers, json, retry_count + 1)
+
+                raise SpotifyAPIError(
+                    message=f"Rate limit exceeded after {MAX_RETRIES} retries",
+                    endpoint=url
+                )
+
+            if resp.status == 401:
+                raise SpotifyAPIError(
+                    message="Unauthorized - token may have expired",
+                    endpoint=url
+                )
+
+            if resp.status not in (200, 201):
+                text = await resp.text()
+                raise SpotifyAPIError(
+                    message=f"API error {resp.status}: {text}",
+                    endpoint=url
+                )
+
+            return await resp.json()
+
+    except aiohttp.ClientError as err:
+        log.error(f"AIOHTTP client error on PUT: {err}")
+
+        if retry_count < MAX_RETRIES:
+            wait_time = (2 ** retry_count) + 1
+            await asyncio.sleep(wait_time)
+            return await put_json(session, url, headers, json, retry_count + 1)
+
+        raise SpotifyAPIError(
+            message=f"PUT failed after {MAX_RETRIES} retries: {err}",
+            endpoint=url
+        )
+    except SpotifyAPIError:
+        raise
+    except Exception as err:
+        log.error(f"Unexpected error in put_json: {err}")
+        raise SpotifyAPIError(
+            message=str(err),
+            endpoint=url
+        )
+
+
 async def put_data(
     session: aiohttp.ClientSession,
     url: str,

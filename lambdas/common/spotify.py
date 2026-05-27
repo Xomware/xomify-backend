@@ -181,7 +181,11 @@ class Spotify:
             raise Exception(f"Get Spotify Access Token: {err}") from err
         
     async def aiohttp_get_access_token(self) -> str:
-        """Get access token using refresh token (async)."""
+        """Get access token using refresh token (async).
+
+        Persists a rotated refresh_token back to DynamoDB when Spotify
+        returns one — prevents token-revocation drift.
+        """
         try:
             log.info("Getting spotify access token (aiohttp)...")
             url = "https://accounts.spotify.com/api/token"
@@ -199,12 +203,30 @@ class Spotify:
                 if response.status != 200:
                     raise Exception(f"Error refreshing token: {response_data}")
 
+                new_refresh = response_data.get('refresh_token')
+                if new_refresh and new_refresh != self.refresh_token:
+                    log.info("Spotify rotated refresh token — persisting new token")
+                    self.refresh_token = new_refresh
+                    self._persist_rotated_refresh_token(new_refresh)
+
                 log.info("Successfully retrieved spotify access token!")
                 return response_data['access_token']
-                
+
         except Exception as err:
             log.error(f"AIOHTTP Get Spotify Access Token: {err}")
             raise Exception(f"AIOHTTP Get Spotify Access Token: {err}") from err
+
+    def _persist_rotated_refresh_token(self, new_token: str):
+        """Save a rotated refresh token back to the users table."""
+        try:
+            from lambdas.common.dynamo_helpers import update_table_item_field
+            from lambdas.common.constants import USERS_TABLE_NAME
+            update_table_item_field(
+                USERS_TABLE_NAME, 'email', self.email,
+                'refreshToken', new_token
+            )
+        except Exception as err:
+            log.warning(f"Failed to persist rotated refresh token: {err}")
         
     async def get_top_tracks(self):
         """Fetch top tracks for all time ranges (sync version)."""

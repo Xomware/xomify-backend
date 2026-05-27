@@ -136,25 +136,21 @@ async def process_user(
 
         # Fetch releases for this specific week
         log.info(f"[{email}] Fetching releases for {week_key}...")
-        releases = await fetch_releases_for_week(
+        releases, skipped_count = await fetch_releases_for_week(
             spotify,
             artist_ids,
             start_date,
             end_date
         )
-        log.info(f"[{email}] Found {len(releases)} releases")
+        log.info(f"[{email}] Found {len(releases)} releases ({skipped_count} artists failed)")
 
         # Get track URIs for playlist
         track_uris = []
         for release in releases:
             uri = release.get('uri')
             if uri:
-                # If it's an album, we need to get its tracks
-                if 'album' in uri:
-                    album_tracks = await get_album_track_uris(spotify, uri)
-                    track_uris.extend(album_tracks)
-                else:
-                    track_uris.append(uri)
+                album_tracks = await get_album_track_uris(spotify, uri)
+                track_uris.extend(album_tracks)
 
         # Remove duplicates
         track_uris = list(set(track_uris))
@@ -174,8 +170,19 @@ async def process_user(
                 update_user_table_release_radar_id(user, playlist_id)
                 log.info(f"[{email}] Created playlist: {playlist_id}")
             else:
-                log.info(f"[{email}] Updating playlist: {playlist_id}")
-                await spotify.release_radar_playlist.aiohttp_update_playlist(track_uris)
+                try:
+                    log.info(f"[{email}] Updating playlist: {playlist_id}")
+                    await spotify.release_radar_playlist.aiohttp_update_playlist(track_uris)
+                except Exception as update_err:
+                    log.warning(f"[{email}] Playlist update failed ({update_err}), recreating...")
+                    spotify.release_radar_playlist.set_id(None)
+                    await spotify.release_radar_playlist.aiohttp_build_playlist(
+                        track_uris,
+                        BLACK_LOGO_BASE_64
+                    )
+                    playlist_id = spotify.release_radar_playlist.id
+                    update_user_table_release_radar_id(user, playlist_id)
+                    log.info(f"[{email}] Recreated playlist: {playlist_id}")
         else:
             log.info(f"[{email}] No tracks to add to playlist")
 
@@ -210,7 +217,7 @@ async def fetch_releases_for_week(
     artist_ids: list,
     start_date: datetime,
     end_date: datetime
-) -> list:
+) -> tuple[list, int]:
     """
     Fetch all releases from followed artists within the week.
 
@@ -226,24 +233,27 @@ async def fetch_releases_for_week(
         end_date: Friday end of week (23:59:59)
 
     Returns:
-        List of normalized release objects, sorted by releaseDate descending
+        Tuple of (releases list sorted by releaseDate desc, skipped_artists count)
+
+    Raises:
+        ReleaseRadarError: If majority of artist fetches fail (systematic issue)
     """
     releases = []
     seen_ids = set()
     skipped_artists = 0
+    last_error = None
 
     # Semaphore limits concurrent requests within a batch
     semaphore = asyncio.Semaphore(8)
 
     async def fetch_artist(artist_id: str) -> list:
         """Fetch releases for a single artist (one combined API call)."""
-        nonlocal skipped_artists
+        nonlocal skipped_artists, last_error
         async with semaphore:
             try:
-                # Combined include_groups in one call (#123 optimization)
                 url = (
                     f"https://api.spotify.com/v1/artists/{artist_id}/albums"
-                    f"?include_groups=album,single,appears_on&limit=20"
+                    f"?include_groups=album,single,appears_on&limit=50"
                 )
 
                 data = await fetch_json(
@@ -285,6 +295,7 @@ async def fetch_releases_for_week(
 
             except Exception as err:
                 skipped_artists += 1
+                last_error = err
                 log.warning(f"Failed to fetch releases for artist {artist_id}: {err}")
                 return []
 
@@ -308,13 +319,19 @@ async def fetch_releases_for_week(
             await asyncio.sleep(0.3)
 
     # Log summary
-    checked = total
-    log.info(f"Checked {checked} artists, skipped {skipped_artists} due to errors")
+    log.info(f"Checked {total} artists, skipped {skipped_artists} due to errors")
+
+    # If majority of artists failed, something is systematically wrong
+    if total > 0 and skipped_artists > total * 0.5:
+        raise ReleaseRadarError(
+            message=f"{skipped_artists}/{total} artist fetches failed. Last error: {last_error}",
+            function="fetch_releases_for_week"
+        )
 
     # Sort by release date (newest first)
     releases.sort(key=lambda x: x.get('releaseDate', ''), reverse=True)
 
-    return releases
+    return releases, skipped_artists
 
 
 def is_in_week(release_date_str: str, start_date: datetime, end_date: datetime) -> bool:

@@ -2,7 +2,7 @@ import requests
 import aiohttp
 import asyncio
 from lambdas.common.logger import get_logger
-from lambdas.common.aiohttp_helper import fetch_json, post_json, delete_json, put_data
+from lambdas.common.aiohttp_helper import fetch_json, post_json, delete_json, put_data, put_json
 
 log = get_logger(__file__)
 
@@ -74,12 +74,11 @@ class Playlist:
             raise Exception(f"Update Playlist: {err}") from err
         
     async def aiohttp_update_playlist(self, uri_list: list):
+        """Replace all tracks atomically via PUT (first 100) + POST (remainder)."""
         try:
             log.info(f"Updating playlist (aiohttp): {self.name} with {len(uri_list)} tracks")
             self.uri_list = uri_list
-            await self.aiohttp_delete_playlist_songs()
-            await asyncio.sleep(1)
-            await self.aiohttp_add_playlist_songs()
+            await self.aiohttp_replace_playlist_songs()
             log.info(f"Playlist '{self.name}' Updated!")
         except Exception as err:
             log.error(f"AIOHTTP Update Playlist: {err}")
@@ -169,6 +168,35 @@ class Playlist:
         except Exception as err:
             log.error(f"AIOHTTP Add Playlist Songs: {err}")
             raise Exception (f"AIOHTTP Add Playlist Songs: {err}") from err
+
+    # ------------------------
+    # Replace Playlist Songs (atomic PUT + POST)
+    # ------------------------
+    async def aiohttp_replace_playlist_songs(self):
+        """PUT first 100 URIs (replaces all tracks), then POST remaining batches."""
+        try:
+            if not self.uri_list or len(self.uri_list) == 0:
+                log.info("No tracks to add. Clearing playlist.")
+                url = f"{self.BASE_URL}/playlists/{self.id}/tracks"
+                await put_json(self.aiohttp_session, url, headers=self.headers, json={"uris": []})
+                return
+
+            batch_size = 100
+            url = f"{self.BASE_URL}/playlists/{self.id}/tracks"
+
+            first_batch = self.uri_list[:batch_size]
+            await put_json(self.aiohttp_session, url, headers=self.headers, json={"uris": first_batch})
+            log.debug(f"AIOHTTP Replaced with {len(first_batch)} tracks (PUT)")
+
+            for i in range(batch_size, len(self.uri_list), batch_size):
+                batch_uris = self.uri_list[i:i + batch_size]
+                await post_json(self.aiohttp_session, url, headers=self.headers, json={"uris": batch_uris})
+                log.debug(f"AIOHTTP Added {len(batch_uris)} tracks (POST batch)")
+
+            log.info(f"AIOHTTP All {len(self.uri_list)} tracks replaced successfully.")
+        except Exception as err:
+            log.error(f"AIOHTTP Replace Playlist Songs: {err}")
+            raise Exception(f"AIOHTTP Replace Playlist Songs: {err}") from err
 
     # ------------------------
     # Add Playlist Image
