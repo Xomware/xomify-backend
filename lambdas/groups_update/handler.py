@@ -29,6 +29,7 @@ def handler(event, context):
     group_id = body.get('groupId')
     name = body.get('name')
     description = body.get('description')
+    image_url = body.get('imageUrl')
 
     # Verify user is admin
     members = list_members_of_group(group_id)
@@ -53,6 +54,11 @@ def handler(event, context):
         update_parts.append("#desc = :desc")
         attr_values[':desc'] = description
         attr_names['#desc'] = 'description'
+
+    if image_url is not None:
+        update_parts.append("#imageUrl = :imageUrl")
+        attr_values[':imageUrl'] = image_url
+        attr_names['#imageUrl'] = 'imageUrl'
 
     if not update_parts:
         raise ValidationError("No fields to update")
