@@ -219,7 +219,7 @@ def handler(event, context):
                 artist_name=artist_name,
                 album_art=album_art_url or "",
                 album_name=album_name,
-                rating_context="share",
+                context="share",
             )
             log.info(
                 f"Rate-on-share: wrote rating {raw_rating} for track {track_id} "

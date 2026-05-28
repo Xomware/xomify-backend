@@ -12,8 +12,12 @@ from lambdas.common.errors import SpotifyAPIError
 
 log = get_logger(__file__)
 
-# Rate limit event - initialized lazily per event loop
+# Rate limit event - initialized lazily per event loop.
+# We cache both the event and the loop it was created on so we can detect a
+# stale event bound to a closed loop (e.g. a warm Lambda invocation where
+# asyncio.run() has created a brand-new loop).
 _rate_limited: asyncio.Event = None
+_rate_limited_loop: asyncio.AbstractEventLoop = None
 
 MAX_RETRIES = 3
 
@@ -23,22 +27,20 @@ def _get_rate_limit_event() -> asyncio.Event:
     Get or create the rate limit event for the current event loop.
     This ensures the event is always bound to the correct loop.
     """
-    global _rate_limited
-    
-    try:
-        # Check if we have an event and it's bound to the current loop
-        if _rate_limited is not None:
-            # Try to access the event - will fail if wrong loop
-            loop = asyncio.get_running_loop()
-            # In Python 3.10+, events don't have _loop attribute exposed the same way
-            # So we just try to use it and recreate if it fails
-            return _rate_limited
-    except RuntimeError:
-        pass
-    
-    # Create new event for current loop
+    global _rate_limited, _rate_limited_loop
+
+    current_loop = asyncio.get_running_loop()
+
+    # Reuse the cached event only if it was created on the loop we're running
+    # on right now. Otherwise it's bound to a stale (closed) loop and would
+    # raise "got Future attached to a different loop" when awaited.
+    if _rate_limited is not None and _rate_limited_loop is current_loop:
+        return _rate_limited
+
+    # Create a new event bound to the current loop.
     _rate_limited = asyncio.Event()
     _rate_limited.set()  # Start in "open" state
+    _rate_limited_loop = current_loop
     return _rate_limited
 
 

@@ -28,7 +28,7 @@ def handler(event, context):
     track_name = body.get('trackName')
     artist_name = body.get('artistName')
     album_art = body.get('albumArt')
-    album_name = body.get('album_name', None)
+    album_name = body.get('albumName', None)
     rating_context = body.get('context', None)
 
     log.info(f"Creating/Updating Single Track Rating for user {email} and track id {track_id} with rating {rating}")
