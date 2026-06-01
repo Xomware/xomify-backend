@@ -51,7 +51,7 @@ HANDLER = "public_top_items"
 # any userId not in this set returns 404 (same as unknown user) to avoid
 # enumeration. v1 contains only Dom's userId.
 #
-# TODO(dom): replace "PLACEHOLDER_DOM_USER_ID" with Dom's real Spotify userId.
+# Dom's Spotify userId (open.spotify.com/user/12146721999).
 #
 # v2 upgrade path: replace this constant with a data-driven `profileVisibility`
 # flag on the users table. The gate check below (`_is_public`) is the only thing
@@ -64,7 +64,7 @@ def _load_public_user_ids() -> frozenset[str]:
     env_ids = {uid.strip() for uid in raw.split(",") if uid.strip()}
     if env_ids:
         return frozenset(env_ids)
-    return frozenset({"PLACEHOLDER_DOM_USER_ID"})
+    return frozenset({"12146721999"})
 
 
 PUBLIC_USER_IDS = _load_public_user_ids()
