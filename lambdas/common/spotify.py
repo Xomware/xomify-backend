@@ -317,6 +317,69 @@ class Spotify:
             log.error(f"Get Top Items For API: {err}")
             raise Exception(f"Get Top Items For API: {err}") from err
 
+    # Spotify caps the batch endpoints at 50 tracks / 50 artists per request.
+    _BATCH_LIMIT = 50
+
+    def get_tracks_by_ids(self, track_ids: list) -> list:
+        """
+        Batch-hydrate full track objects from bare Spotify track IDs.
+
+        Uses `GET /v1/tracks?ids=` (synchronous, via the sync `headers` set up in
+        `__init__` when no aiohttp session is supplied). Spotify caps the call at
+        50 ids, so we chunk transparently and concatenate. Missing/None entries
+        in Spotify's response are dropped so callers always get real objects.
+
+        Args:
+            track_ids: List of Spotify track IDs (order preserved across chunks).
+
+        Returns:
+            List of full track objects (same shape as `/me/top/tracks` items).
+        """
+        return self.__batch_get_objects("tracks", track_ids)
+
+    def get_artists_by_ids(self, artist_ids: list) -> list:
+        """
+        Batch-hydrate full artist objects from bare Spotify artist IDs.
+
+        Uses `GET /v1/artists?ids=`. Same chunking/cleanup semantics as
+        `get_tracks_by_ids`.
+
+        Args:
+            artist_ids: List of Spotify artist IDs (order preserved).
+
+        Returns:
+            List of full artist objects (same shape as `/me/top/artists` items).
+        """
+        return self.__batch_get_objects("artists", artist_ids)
+
+    def __batch_get_objects(self, kind: str, ids: list) -> list:
+        """
+        Shared batch-get for `tracks`/`artists`.
+
+        Spotify returns `{ "tracks": [...] }` or `{ "artists": [...] }`; the
+        list is positionally aligned with the requested ids and may contain
+        `null` for unresolved ids, which we filter out.
+        """
+        clean_ids = [i for i in (ids or []) if i]
+        if not clean_ids:
+            return []
+
+        objects: list = []
+        for start in range(0, len(clean_ids), self._BATCH_LIMIT):
+            chunk = clean_ids[start:start + self._BATCH_LIMIT]
+            url = f"{self.BASE_URL}/{kind}?ids={','.join(chunk)}"
+
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                raise Exception(
+                    f"Batch get {kind} failed ({response.status_code}): {response.text}"
+                )
+
+            data = response.json()
+            objects.extend([obj for obj in (data.get(kind) or []) if obj])
+
+        return objects
+
     def __get_last_month_data(self) -> tuple:
         """
         Get information about last month for playlist naming.

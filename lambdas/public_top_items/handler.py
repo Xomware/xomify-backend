@@ -28,12 +28,13 @@ in this repo.
 """
 
 import asyncio
-import os
 from typing import Any, Optional
 
 from lambdas.common.dynamo_helpers import get_user_by_user_id
 from lambdas.common.errors import handle_errors, NotFoundError, ValidationError
 from lambdas.common.logger import get_logger
+from lambdas.common.public_access import PUBLIC_USER_IDS as _DEFAULT_PUBLIC_USER_IDS
+from lambdas.common.public_access import is_public
 from lambdas.common.top_items_cache import get_cached_with_meta, set_cached
 from lambdas.common.top_items_fetch import _fetch_top_items_with_partial_tolerance
 from lambdas.common.top_items_transform import PUBLIC_RANGE, flatten_public_top_items
@@ -47,32 +48,17 @@ HANDLER = "public_top_items"
 # ============================================
 # Public visibility gate (v1: hardcoded allowlist)
 # ============================================
-# v1 gate is a hardcoded allowlist of public Spotify userIds. Default-deny —
-# any userId not in this set returns 404 (same as unknown user) to avoid
-# enumeration. v1 contains only Dom's userId.
-#
-# Dom's Spotify userId (open.spotify.com/user/12146721999).
-#
-# v2 upgrade path: replace this constant with a data-driven `profileVisibility`
-# flag on the users table. The gate check below (`_is_public`) is the only thing
-# that changes — the rest of the handler is agnostic to how "public" is decided.
-#
-# Optionally overridable via the `PUBLIC_USER_IDS` env var (comma-separated) so
-# infra can inject the real id without a code change.
-def _load_public_user_ids() -> frozenset[str]:
-    raw = os.environ.get("PUBLIC_USER_IDS", "")
-    env_ids = {uid.strip() for uid in raw.split(",") if uid.strip()}
-    if env_ids:
-        return frozenset(env_ids)
-    return frozenset({"12146721999"})
-
-
-PUBLIC_USER_IDS = _load_public_user_ids()
+# The allowlist + gate now live in `lambdas/common/public_access.py` so all
+# three public `/music/*` endpoints share one source of truth. We bind a
+# module-level `PUBLIC_USER_IDS` here so existing tests can keep patching the
+# constant on this module (`patch.object(handler, "PUBLIC_USER_IDS", ...)`) and
+# `_is_public` reads through that patchable name.
+PUBLIC_USER_IDS = _DEFAULT_PUBLIC_USER_IDS
 
 
 def _is_public(user_id: str) -> bool:
     """Default-deny gate: only allowlisted userIds are public."""
-    return user_id in PUBLIC_USER_IDS
+    return is_public(user_id, PUBLIC_USER_IDS)
 
 
 def _empty_public_response() -> dict:
