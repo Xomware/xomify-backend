@@ -116,6 +116,58 @@ def get_cached(email: str) -> Optional[dict]:
     return payload
 
 
+def get_cached_with_meta(email: str) -> Optional[dict]:
+    """
+    Like `get_cached`, but also returns the `cachedAt` ISO timestamp.
+
+    The public top-items endpoint needs `cachedAt` to populate the frontend's
+    `updatedAt` field, which the lean `{tracks, artists, genres}` payload from
+    `get_cached` intentionally drops. Same freshness gate and miss semantics as
+    `get_cached`.
+
+    Returns:
+        `{"tracks", "artists", "genres", "cachedAt"}` on a fresh hit, else None.
+    """
+    if not email:
+        return None
+    try:
+        table = dynamodb.Table(TOP_ITEMS_CACHE_TABLE_NAME)
+        response = table.get_item(Key={"email": email})
+    except Exception as err:
+        log.error(f"top_items_cache.get_cached_with_meta DDB error for {email}: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="get_cached_with_meta",
+            table=TOP_ITEMS_CACHE_TABLE_NAME,
+        )
+
+    item = response.get("Item")
+    if not item:
+        log.info(f"top_items_cache miss email={email} reason=no_row")
+        return None
+
+    cached_at = _parse_cached_at(item.get("cachedAt"))
+    if cached_at is None:
+        log.info(f"top_items_cache miss email={email} reason=missing_cachedAt")
+        return None
+
+    if cached_at.date() < _today_utc_date():
+        log.info(
+            f"top_items_cache miss email={email} reason=stale "
+            f"cachedAt={cached_at.isoformat()}"
+        )
+        return None
+
+    payload = {
+        "tracks": item.get("tracks") or {},
+        "artists": item.get("artists") or {},
+        "genres": item.get("genres") or {},
+        "cachedAt": item.get("cachedAt"),
+    }
+    log.info(f"top_items_cache hit email={email} cachedAt={cached_at.isoformat()}")
+    return payload
+
+
 def set_cached(email: str, top_items: dict) -> None:
     """
     Write `top_items` to the cache for `email`.

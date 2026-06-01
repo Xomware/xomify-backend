@@ -28,6 +28,12 @@ from lambdas.user_top_items.handler import (
     handler,
 )
 
+# After the 2a-refactor, the per-range fetch lives in the shared
+# `lambdas.common.top_items_fetch` module (re-exported from the handler for
+# backwards compatibility). Tests that patch `aiohttp` / `Spotify` for the
+# fetch path must target the module where the code actually runs.
+_FETCH_MODULE = "lambdas.common.top_items_fetch"
+
 
 # ============================================
 # Fixtures
@@ -334,8 +340,8 @@ def _build_fake_spotify(track_specs: dict, artist_specs: dict) -> MagicMock:
     return fake
 
 
-@patch("lambdas.user_top_items.handler.aiohttp.ClientSession")
-@patch("lambdas.user_top_items.handler.Spotify")
+@patch("lambdas.common.top_items_fetch.aiohttp.ClientSession")
+@patch("lambdas.common.top_items_fetch.Spotify")
 def test_fetch_full_success_returns_no_failed_ranges(mock_spotify_cls, mock_session_cls, sample_user):
     mock_spotify_cls.return_value = _build_fake_spotify({}, {})
     # aiohttp.ClientSession() is used as an async context manager.
@@ -353,8 +359,8 @@ def test_fetch_full_success_returns_no_failed_ranges(mock_spotify_cls, mock_sess
         assert payload["genres"][term] is not None
 
 
-@patch("lambdas.user_top_items.handler.aiohttp.ClientSession")
-@patch("lambdas.user_top_items.handler.Spotify")
+@patch("lambdas.common.top_items_fetch.aiohttp.ClientSession")
+@patch("lambdas.common.top_items_fetch.Spotify")
 def test_fetch_one_track_range_failure_records_only_that_range(
     mock_spotify_cls, mock_session_cls, sample_user
 ):
@@ -376,8 +382,8 @@ def test_fetch_one_track_range_failure_records_only_that_range(
     assert payload["genres"]["short_term"] is not None
 
 
-@patch("lambdas.user_top_items.handler.aiohttp.ClientSession")
-@patch("lambdas.user_top_items.handler.Spotify")
+@patch("lambdas.common.top_items_fetch.aiohttp.ClientSession")
+@patch("lambdas.common.top_items_fetch.Spotify")
 def test_fetch_artist_failure_nulls_genres_for_that_range(
     mock_spotify_cls, mock_session_cls, sample_user
 ):
