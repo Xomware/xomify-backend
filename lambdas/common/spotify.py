@@ -10,6 +10,16 @@ from lambdas.common.logger import get_logger
 
 log = get_logger(__file__)
 
+
+class SpotifyInsufficientScopeError(Exception):
+    """
+    Raised when Spotify returns 403 with an insufficient-scope error.
+
+    Used by the public now-playing path to distinguish "user's token predates a
+    newly-added scope" (treat as a graceful no-data case) from a real failure.
+    """
+
+
 class Spotify:
     """
     Spotify API client for a single user.
@@ -385,6 +395,55 @@ class Spotify:
         # 200 with an empty body can occur in practice; treat as not playing.
         if not (response.content or b"").strip():
             log.info("Get Playback State: 200 with empty body (nothing playing)")
+            return None
+
+        return response.json()
+
+    def get_recently_played(self, limit: int = 1) -> dict | None:
+        """
+        Fetch the user's recently-played tracks (synchronous).
+
+        Uses `GET /me/player/recently-played?limit=<n>`, which requires the
+        `user-read-recently-played` scope. This is the fallback the public
+        now-playing path uses when nothing is actively playing.
+
+        Spotify 403 with an insufficient-scope error is raised as
+        `SpotifyInsufficientScopeError` so the caller can treat tokens that
+        predate the new scope as a graceful "no data" case rather than a hard
+        failure. A 204/empty body is surfaced as None. Any other non-200 status
+        raises so the caller can degrade.
+
+        Args:
+            limit: Number of recently-played items to request (default 1).
+
+        Returns:
+            The recently-played object (`{ "items": [...], ... }`) on 200, or
+            None on 204 / empty body.
+
+        Raises:
+            SpotifyInsufficientScopeError: On 403 insufficient scope.
+            Exception: On any other non-200/204 status.
+        """
+        url = f"{self.BASE_URL}/me/player/recently-played?limit={limit}"
+        response = requests.get(url, headers=self.headers)
+
+        if response.status_code == 403:
+            raise SpotifyInsufficientScopeError(
+                f"Get Recently Played 403 (likely insufficient scope): {response.text}"
+            )
+
+        # 204 = no recently-played history.
+        if response.status_code == 204:
+            log.info("Get Recently Played: 204 No Content (no history)")
+            return None
+
+        if response.status_code != 200:
+            raise Exception(
+                f"Get Recently Played failed ({response.status_code}): {response.text}"
+            )
+
+        if not (response.content or b"").strip():
+            log.info("Get Recently Played: 200 with empty body (no history)")
             return None
 
         return response.json()
