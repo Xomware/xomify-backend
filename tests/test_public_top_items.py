@@ -57,11 +57,13 @@ def public_user():
     }
 
 
-def _event(user_id=None, omit=False):
-    """Build an unauthenticated API Gateway event with optional userId qs."""
+def _event(user_id=None, omit=False, range_param=None):
+    """Build an unauthenticated API Gateway event with optional userId/range qs."""
     qs = {}
     if not omit and user_id is not None:
         qs["userId"] = user_id
+    if range_param is not None:
+        qs["range"] = range_param
     return {
         "httpMethod": "GET",
         "path": "/music/public-top-items",
@@ -105,6 +107,46 @@ def cached_short_term():
             "short_term": {"pop": 10, "rock": 8, "indie": 6, "jazz": 4, "edm": 2, "folk": 1},
             "medium_term": {},
             "long_term": {},
+        },
+        "cachedAt": "2026-06-01T12:00:00+00:00",
+    }
+
+
+def _range_track(prefix, i):
+    return {
+        "name": f"{prefix} Song {i}",
+        "artists": [{"name": f"{prefix} Artist {i}"}],
+        "album": {"images": [{"url": f"https://art/{prefix}/{i}.jpg"}]},
+        "external_urls": {"spotify": f"https://open.spotify.com/track/{prefix}{i}"},
+    }
+
+
+def _range_artist(prefix, i):
+    return {
+        "name": f"{prefix} Artist {i}",
+        "images": [{"url": f"https://img/{prefix}/{i}.jpg"}],
+        "external_urls": {"spotify": f"https://open.spotify.com/artist/{prefix}{i}"},
+    }
+
+
+@pytest.fixture
+def cached_all_ranges():
+    """Cache payload with DISTINCT data per range so we can assert selection."""
+    return {
+        "tracks": {
+            "short_term": [_range_track("short", i) for i in range(3)],
+            "medium_term": [_range_track("medium", i) for i in range(3)],
+            "long_term": [_range_track("long", i) for i in range(3)],
+        },
+        "artists": {
+            "short_term": [_range_artist("short", i) for i in range(3)],
+            "medium_term": [_range_artist("medium", i) for i in range(3)],
+            "long_term": [_range_artist("long", i) for i in range(3)],
+        },
+        "genres": {
+            "short_term": {"shortgenre": 5},
+            "medium_term": {"medgenre": 7},
+            "long_term": {"longgenre": 9},
         },
         "cachedAt": "2026-06-01T12:00:00+00:00",
     }
@@ -155,6 +197,106 @@ def test_public_user_cache_hit_returns_flattened_shape(
     # No Spotify call on a cache hit.
     mock_fetch.assert_not_called()
     mock_set_cached.assert_not_called()
+
+
+# ============================================
+# Time-range param tests (?range=)
+# ============================================
+
+
+@pytest.mark.parametrize(
+    "range_param,prefix,label,genre",
+    [
+        ("short_term", "short", "Last 4 weeks", "shortgenre"),
+        ("medium_term", "medium", "Last 6 months", "medgenre"),
+        ("long_term", "long", "All time", "longgenre"),
+    ],
+)
+@patch("lambdas.public_top_items.handler.set_cached")
+@patch("lambdas.public_top_items.handler._fetch_top_items_with_partial_tolerance")
+@patch("lambdas.public_top_items.handler.get_cached_with_meta")
+@patch("lambdas.public_top_items.handler.get_user_by_user_id")
+def test_range_param_returns_that_ranges_data_and_label(
+    mock_resolve,
+    mock_get_cached,
+    mock_fetch,
+    mock_set_cached,
+    mock_context,
+    public_user,
+    cached_all_ranges,
+    range_param,
+    prefix,
+    label,
+    genre,
+):
+    """Each range returns ITS OWN cached data + the correct windowLabel."""
+    mock_resolve.return_value = public_user
+    mock_get_cached.return_value = cached_all_ranges
+
+    response = handler(_event(PUBLIC_ID, range_param=range_param), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+
+    assert body["windowLabel"] == label
+    assert body["topTracks"][0]["name"] == f"{prefix} Song 0"
+    assert body["topArtists"][0]["name"] == f"{prefix} Artist 0"
+    assert body["topGenres"][0]["genre"] == genre
+    assert body["nowPlaying"] is None
+
+    mock_fetch.assert_not_called()
+    mock_set_cached.assert_not_called()
+
+
+@patch("lambdas.public_top_items.handler.set_cached")
+@patch("lambdas.public_top_items.handler._fetch_top_items_with_partial_tolerance")
+@patch("lambdas.public_top_items.handler.get_cached_with_meta")
+@patch("lambdas.public_top_items.handler.get_user_by_user_id")
+def test_invalid_range_defaults_to_short_term(
+    mock_resolve,
+    mock_get_cached,
+    mock_fetch,
+    mock_set_cached,
+    mock_context,
+    public_user,
+    cached_all_ranges,
+):
+    """A bogus ?range= clamps to short_term (no 400)."""
+    mock_resolve.return_value = public_user
+    mock_get_cached.return_value = cached_all_ranges
+
+    response = handler(_event(PUBLIC_ID, range_param="bogus"), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["windowLabel"] == "Last 4 weeks"
+    assert body["topTracks"][0]["name"] == "short Song 0"
+    assert body["topGenres"][0]["genre"] == "shortgenre"
+
+
+@patch("lambdas.public_top_items.handler.set_cached")
+@patch("lambdas.public_top_items.handler._fetch_top_items_with_partial_tolerance")
+@patch("lambdas.public_top_items.handler.get_cached_with_meta")
+@patch("lambdas.public_top_items.handler.get_user_by_user_id")
+def test_absent_range_defaults_to_short_term(
+    mock_resolve,
+    mock_get_cached,
+    mock_fetch,
+    mock_set_cached,
+    mock_context,
+    public_user,
+    cached_all_ranges,
+):
+    """No ?range= at all defaults to short_term."""
+    mock_resolve.return_value = public_user
+    mock_get_cached.return_value = cached_all_ranges
+
+    response = handler(_event(PUBLIC_ID), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["windowLabel"] == "Last 4 weeks"
+    assert body["topTracks"][0]["name"] == "short Song 0"
 
 
 @patch("lambdas.public_top_items.handler.set_cached")

@@ -352,6 +352,43 @@ class Spotify:
         """
         return self.__batch_get_objects("artists", artist_ids)
 
+    def get_playback_state(self) -> dict | None:
+        """
+        Fetch the user's current playback state (synchronous).
+
+        Uses `GET /me/player` (Get Playback State), which works with the
+        existing `user-read-playback-state` scope the user already granted. We
+        deliberately do NOT use `/me/player/currently-playing` — that requires
+        the `user-read-currently-playing` scope we have not requested.
+
+        Spotify returns 204 No Content when nothing is playing or there is no
+        active device; we surface that as None (caller maps it to "not
+        playing"). Any non-200/204 status raises so the caller can degrade.
+
+        Returns:
+            The full playback-state object (includes `is_playing`,
+            `progress_ms`, `item`, ...) on 200, or None on 204 / empty body.
+        """
+        url = f"{self.BASE_URL}/me/player"
+        response = requests.get(url, headers=self.headers)
+
+        # 204 = no active device / nothing playing.
+        if response.status_code == 204:
+            log.info("Get Playback State: 204 No Content (nothing playing)")
+            return None
+
+        if response.status_code != 200:
+            raise Exception(
+                f"Get Playback State failed ({response.status_code}): {response.text}"
+            )
+
+        # 200 with an empty body can occur in practice; treat as not playing.
+        if not (response.content or b"").strip():
+            log.info("Get Playback State: 200 with empty body (nothing playing)")
+            return None
+
+        return response.json()
+
     def __batch_get_objects(self, kind: str, ids: list) -> list:
         """
         Shared batch-get for `tracks`/`artists`.
