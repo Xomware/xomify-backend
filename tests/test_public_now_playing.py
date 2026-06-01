@@ -2,18 +2,22 @@
 Tests for the public_now_playing lambda (GET /music/public-now-playing).
 
 Public, unauthenticated endpoint serving an allowlisted user's CURRENT Spotify
-playback in the frontend now-playing contract:
+playback (with a recently-played fallback) in the frontend now-playing contract:
 
-    { isPlaying, track: {name,artist,albumArt,url}|null, progressMs, durationMs }
+    { isPlaying, track: {name,artist,albumArt,url}|null, progressMs, durationMs,
+      source: "playing"|"recent"|"none", playedAt: str|null }
 
 Covers:
-- Allowlisted user, track playing -> 200 mapped shape.
-- Spotify 204 / no playback (client returns None) -> not-playing 200.
+- Allowlisted user, track playing -> 200 source="playing".
+- Not playing + recently-played has item -> 200 source="recent" + playedAt.
+- Not playing + recently-played 403 (insufficient scope) -> 200 source="none".
+- Not playing + recently-played empty -> 200 source="none".
+- Spotify 204 / no playback then no recent -> source="none" 200.
 - Non-track item (podcast episode, no album/artists) -> graceful, no 500.
 - userId NOT on the allowlist (real user) -> 404 (no existence leak).
 - Unknown userId (resolver None) -> 404.
 - Missing userId query param -> 400.
-- Spotify error (raises) -> not-playing 200, never 5xx.
+- Spotify error (raises) -> source="none" 200, never 5xx.
 
 The users table is mocked and the Spotify client is patched — no network.
 """
@@ -23,6 +27,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lambdas.common.spotify import SpotifyInsufficientScopeError
 from lambdas.public_now_playing import handler as np_handler
 from lambdas.public_now_playing.handler import handler
 
@@ -77,13 +82,48 @@ def _playing_state():
     }
 
 
-def _patch_spotify(return_value=None, side_effect=None):
-    """Patch the Spotify class so its instance's get_playback_state is mocked."""
+def _recently_played(played_at="2026-06-01T12:00:00.000Z"):
+    """A realistic `/me/player/recently-played?limit=1` payload."""
+    return {
+        "items": [
+            {
+                "played_at": played_at,
+                "track": {
+                    "name": "Recent Song",
+                    "duration_ms": 180000,
+                    "artists": [{"name": "Recent Artist"}],
+                    "album": {"images": [{"url": "https://art/recent.jpg"}]},
+                    "external_urls": {
+                        "spotify": "https://open.spotify.com/track/recent"
+                    },
+                },
+            }
+        ]
+    }
+
+
+def _patch_spotify(
+    playback_return=None,
+    playback_side_effect=None,
+    recent_return=None,
+    recent_side_effect=None,
+):
+    """
+    Patch the Spotify class, mocking both get_playback_state and
+    get_recently_played on the instance.
+    """
     instance = MagicMock()
-    if side_effect is not None:
-        instance.get_playback_state.side_effect = side_effect
+
+    if playback_side_effect is not None:
+        instance.get_playback_state.side_effect = playback_side_effect
     else:
-        instance.get_playback_state.return_value = return_value
+        instance.get_playback_state.return_value = playback_return
+
+    if recent_side_effect is not None:
+        instance.get_recently_played.side_effect = recent_side_effect
+    else:
+        instance.get_recently_played.return_value = recent_return
+
     return patch(
         "lambdas.public_now_playing.handler.Spotify", return_value=instance
     )
@@ -98,12 +138,14 @@ def _patch_spotify(return_value=None, side_effect=None):
 def test_playing_track_returns_mapped_shape(mock_resolve, mock_context, public_user):
     mock_resolve.return_value = public_user
 
-    with _patch_spotify(return_value=_playing_state()):
+    with _patch_spotify(playback_return=_playing_state()) as spotify_cls:
         response = handler(_event(PUBLIC_ID), mock_context)
 
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
     assert body["isPlaying"] is True
+    assert body["source"] == "playing"
+    assert body["playedAt"] is None
     assert body["progressMs"] == 42000
     assert body["durationMs"] == 210000
     assert body["track"] == {
@@ -112,14 +154,47 @@ def test_playing_track_returns_mapped_shape(mock_resolve, mock_context, public_u
         "albumArt": "https://art/np.jpg",
         "url": "https://open.spotify.com/track/np",
     }
+    # Actively playing -> recently-played fallback never invoked.
+    spotify_cls.return_value.get_recently_played.assert_not_called()
 
 
 @patch("lambdas.public_now_playing.handler.get_user_by_user_id")
-def test_204_no_playback_returns_not_playing(mock_resolve, mock_context, public_user):
-    """Spotify 204 -> client returns None -> not-playing 200."""
+def test_not_playing_falls_back_to_recent(mock_resolve, mock_context, public_user):
+    """Nothing playing + recently-played has an item -> source=recent + playedAt."""
     mock_resolve.return_value = public_user
 
-    with _patch_spotify(return_value=None):
+    with _patch_spotify(
+        playback_return=None, recent_return=_recently_played()
+    ) as spotify_cls:
+        response = handler(_event(PUBLIC_ID), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["isPlaying"] is False
+    assert body["source"] == "recent"
+    assert body["playedAt"] == "2026-06-01T12:00:00.000Z"
+    assert body["progressMs"] is None
+    assert body["durationMs"] is None
+    assert body["track"] == {
+        "name": "Recent Song",
+        "artist": "Recent Artist",
+        "albumArt": "https://art/recent.jpg",
+        "url": "https://open.spotify.com/track/recent",
+    }
+    spotify_cls.return_value.get_recently_played.assert_called_once_with(limit=1)
+
+
+@patch("lambdas.public_now_playing.handler.get_user_by_user_id")
+def test_recent_403_insufficient_scope_returns_none(
+    mock_resolve, mock_context, public_user
+):
+    """Not playing + recently-played 403 insufficient scope -> source=none, 200."""
+    mock_resolve.return_value = public_user
+
+    with _patch_spotify(
+        playback_return=None,
+        recent_side_effect=SpotifyInsufficientScopeError("403 insufficient scope"),
+    ):
         response = handler(_event(PUBLIC_ID), mock_context)
 
     assert response["statusCode"] == 200
@@ -129,6 +204,62 @@ def test_204_no_playback_returns_not_playing(mock_resolve, mock_context, public_
         "track": None,
         "progressMs": None,
         "durationMs": None,
+        "source": "none",
+        "playedAt": None,
+    }
+
+
+@patch("lambdas.public_now_playing.handler.get_user_by_user_id")
+def test_recent_empty_returns_none(mock_resolve, mock_context, public_user):
+    """Not playing + recently-played empty/no items -> source=none, 200."""
+    mock_resolve.return_value = public_user
+
+    with _patch_spotify(playback_return=None, recent_return={"items": []}):
+        response = handler(_event(PUBLIC_ID), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["source"] == "none"
+    assert body["track"] is None
+    assert body["playedAt"] is None
+
+
+@patch("lambdas.public_now_playing.handler.get_user_by_user_id")
+def test_recent_error_returns_none(mock_resolve, mock_context, public_user):
+    """Not playing + recently-played raises a generic error -> source=none, 200."""
+    mock_resolve.return_value = public_user
+
+    with _patch_spotify(
+        playback_return=None,
+        recent_side_effect=Exception("Spotify 503 timeout"),
+    ):
+        response = handler(_event(PUBLIC_ID), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["source"] == "none"
+    assert body["track"] is None
+
+
+@patch("lambdas.public_now_playing.handler.get_user_by_user_id")
+def test_204_no_playback_no_recent_returns_none(
+    mock_resolve, mock_context, public_user
+):
+    """Spotify 204 (None) + no recently-played -> source=none 200."""
+    mock_resolve.return_value = public_user
+
+    with _patch_spotify(playback_return=None, recent_return=None):
+        response = handler(_event(PUBLIC_ID), mock_context)
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body == {
+        "isPlaying": False,
+        "track": None,
+        "progressMs": None,
+        "durationMs": None,
+        "source": "none",
+        "playedAt": None,
     }
 
 
@@ -148,12 +279,13 @@ def test_non_track_item_degrades_gracefully(mock_resolve, mock_context, public_u
         },
     }
 
-    with _patch_spotify(return_value=episode_state):
+    with _patch_spotify(playback_return=episode_state):
         response = handler(_event(PUBLIC_ID), mock_context)
 
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
     assert body["isPlaying"] is True
+    assert body["source"] == "playing"
     assert body["progressMs"] == 5000
     assert body["durationMs"] == 3_600_000
     # Best-effort name, empty artist join, null albumArt — no crash.
@@ -164,19 +296,21 @@ def test_non_track_item_degrades_gracefully(mock_resolve, mock_context, public_u
 
 
 @patch("lambdas.public_now_playing.handler.get_user_by_user_id")
-def test_active_device_no_item_returns_not_playing_track(
-    mock_resolve, mock_context, public_user
-):
-    """Active device but item is None/missing -> isPlaying flag honored, track null."""
+def test_paused_device_falls_back_to_recent(mock_resolve, mock_context, public_user):
+    """Active device but is_playing False -> not "playing"; falls back to recent."""
     mock_resolve.return_value = public_user
 
-    with _patch_spotify(return_value={"is_playing": False, "item": None}):
+    with _patch_spotify(
+        playback_return={"is_playing": False, "item": None},
+        recent_return=_recently_played(),
+    ):
         response = handler(_event(PUBLIC_ID), mock_context)
 
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
     assert body["isPlaying"] is False
-    assert body["track"] is None
+    assert body["source"] == "recent"
+    assert body["track"]["name"] == "Recent Song"
     assert body["durationMs"] is None
 
 
@@ -184,7 +318,7 @@ def test_active_device_no_item_returns_not_playing_track(
 def test_non_public_user_returns_404(mock_resolve, mock_context):
     mock_resolve.return_value = {"email": "other@example.com", "userId": "not-public"}
 
-    with _patch_spotify(return_value=_playing_state()) as spotify_cls:
+    with _patch_spotify(playback_return=_playing_state()) as spotify_cls:
         response = handler(_event("not-public"), mock_context)
 
     assert response["statusCode"] == 404
@@ -198,7 +332,7 @@ def test_non_public_user_returns_404(mock_resolve, mock_context):
 def test_unknown_user_id_returns_404(mock_resolve, mock_context):
     mock_resolve.return_value = None
 
-    with _patch_spotify(return_value=_playing_state()) as spotify_cls:
+    with _patch_spotify(playback_return=_playing_state()) as spotify_cls:
         response = handler(_event("ghost"), mock_context)
 
     assert response["statusCode"] == 404
@@ -219,11 +353,11 @@ def test_missing_user_id_param_returns_400(mock_resolve, mock_context):
 
 
 @patch("lambdas.public_now_playing.handler.get_user_by_user_id")
-def test_spotify_error_returns_not_playing_200(mock_resolve, mock_context, public_user):
-    """Any Spotify error/timeout must degrade to not-playing 200, never 5xx."""
+def test_playback_error_returns_none_200(mock_resolve, mock_context, public_user):
+    """A playback-state error/timeout must degrade to source=none 200, never 5xx."""
     mock_resolve.return_value = public_user
 
-    with _patch_spotify(side_effect=Exception("Spotify 503 timeout")):
+    with _patch_spotify(playback_side_effect=Exception("Spotify 503 timeout")):
         response = handler(_event(PUBLIC_ID), mock_context)
 
     assert response["statusCode"] == 200
@@ -233,4 +367,6 @@ def test_spotify_error_returns_not_playing_200(mock_resolve, mock_context, publi
         "track": None,
         "progressMs": None,
         "durationMs": None,
+        "source": "none",
+        "playedAt": None,
     }
