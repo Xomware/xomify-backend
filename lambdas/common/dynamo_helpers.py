@@ -6,7 +6,7 @@ Database operations for DynamoDB tables.
 
 from datetime import datetime, timezone
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import DynamoDBError, NotFoundError
@@ -328,6 +328,57 @@ def get_user_table_data(email: str) -> dict:
     except Exception as err:
         log.error(f"Get user data failed: {err}")
         raise
+
+
+def get_user_by_user_id(user_id: str) -> dict | None:
+    """
+    Resolve a user record by its Spotify `userId`.
+
+    The users table is keyed by `email` (hash_key only) and has no `userId`
+    GSI, so v1 uses a filtered table scan. This is acceptable because the
+    table is tiny (a personal app, single intended public user) — the scan
+    is O(n) over a handful of rows.
+
+    Scale-up path: add a `userId-index` GSI to `aws_dynamodb_table.users`
+    (dynamodb.tf) and swap this scan for a `table.query(IndexName=...)`. The
+    function signature stays the same, so callers (e.g. public_top_items)
+    need no change.
+
+    Returns:
+        The user record dict, or None if no user has that userId. Does NOT
+        raise on a miss — the caller decides the response code (e.g. 404).
+    """
+    if not user_id:
+        return None
+
+    try:
+        table = dynamodb.Table(USERS_TABLE_NAME)
+        response = table.scan(
+            FilterExpression=Attr("userId").eq(user_id),
+        )
+        items = response.get("Items", [])
+
+        # Paginate the scan in case the table outgrows a single page.
+        while "LastEvaluatedKey" in response and not items:
+            response = table.scan(
+                FilterExpression=Attr("userId").eq(user_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items = response.get("Items", [])
+
+        if not items:
+            log.info(f"get_user_by_user_id miss userId={user_id}")
+            return None
+
+        return items[0]
+
+    except Exception as err:
+        log.error(f"Get user by userId failed: {err}")
+        raise DynamoDBError(
+            message=str(err),
+            function="get_user_by_user_id",
+            table=USERS_TABLE_NAME,
+        )
 
 
 def batch_get_users(emails: list[str]) -> dict:
