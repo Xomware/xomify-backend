@@ -118,6 +118,50 @@ def test_user_update_enrollments_via_context(
     mock_update_enrollments.assert_called_once_with('test@example.com', True, False)
 
 
+@patch('lambdas.user_update.handler.update_user_table_enrollments')
+def test_user_update_enrollment_wrapped_only_leaves_radar_untouched(
+    mock_update_enrollments, mock_context, authorized_event,
+):
+    """
+    Partial update: a body carrying ONLY wrappedEnrolled must forward
+    releaseRadarEnrolled as None so the helper leaves the sibling flag
+    alone. Regression guard for the double-flag clobber (a Wrapped toggle
+    silently un-enrolling Release Radar).
+    """
+    mock_update_enrollments.return_value = {'email': 'test@example.com'}
+    event = authorized_event(
+        email="test@example.com",
+        httpMethod="POST",
+        path="/user/user-table",
+        body=json.dumps({"wrappedEnrolled": True}),
+    )
+
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 200
+    mock_update_enrollments.assert_called_once_with('test@example.com', True, None)
+
+
+@patch('lambdas.user_update.handler.update_user_table_enrollments')
+def test_user_update_enrollment_radar_only_leaves_wrapped_untouched(
+    mock_update_enrollments, mock_context, authorized_event,
+):
+    """Partial update: a body carrying ONLY releaseRadarEnrolled must
+    forward wrappedEnrolled as None (sibling untouched)."""
+    mock_update_enrollments.return_value = {'email': 'test@example.com'}
+    event = authorized_event(
+        email="test@example.com",
+        httpMethod="POST",
+        path="/user/user-table",
+        body=json.dumps({"releaseRadarEnrolled": False}),
+    )
+
+    response = handler(event, mock_context)
+
+    assert response['statusCode'] == 200
+    mock_update_enrollments.assert_called_once_with('test@example.com', None, False)
+
+
 @patch('lambdas.user_update.handler.update_user_table_refresh_token')
 def test_user_update_invalid_request_returns_400(
     mock_update_token, mock_context, authorized_event,

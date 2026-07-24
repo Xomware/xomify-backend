@@ -275,20 +275,34 @@ def update_user_table_refresh_token(email: str, user_id: str, display_name: str,
         )
 
 
-def update_user_table_enrollments(email: str, wrapped_enrolled: bool, release_radar_enrolled: bool) -> dict:
+def update_user_table_enrollments(
+    email: str,
+    wrapped_enrolled: bool | None = None,
+    release_radar_enrolled: bool | None = None,
+) -> dict:
     """
     Update user enrollment status.
+
+    Partial update: a ``None`` argument means "leave this flag exactly as it
+    is in the stored row." Only the flags explicitly provided are written, so
+    toggling one enrollment can never clobber its sibling (the double-flag
+    clobber bug).
     """
     try:
         user = get_item_by_key(USERS_TABLE_NAME, 'email', email)
-        
-        user['activeWrapped'] = wrapped_enrolled
-        user['activeReleaseRadar'] = release_radar_enrolled
+
+        if wrapped_enrolled is not None:
+            user['activeWrapped'] = wrapped_enrolled
+        if release_radar_enrolled is not None:
+            user['activeReleaseRadar'] = release_radar_enrolled
         user['updatedAt'] = _get_timestamp()
-        
+
         update_table_item(USERS_TABLE_NAME, user)
-        log.info(f"Updated enrollments for {email}: wrapped={wrapped_enrolled}, radar={release_radar_enrolled}")
-        
+        log.info(
+            f"Updated enrollments for {email}: "
+            f"wrapped={user.get('activeWrapped')}, radar={user.get('activeReleaseRadar')}"
+        )
+
         return user
         
     except Exception as err:

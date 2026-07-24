@@ -77,8 +77,12 @@ def handler(event, context):
         log.info(f"Updated refresh token for {caller_email}")
 
     elif has_enrollment_fields:
-        wrapped = body.get('wrappedEnrolled', False)
-        radar = body.get('releaseRadarEnrolled', False)
+        # Partial update: only forward the flags actually present in the body.
+        # An absent flag is passed as None so the helper leaves the stored
+        # value untouched. Previously both flags defaulted to False, so a
+        # single-flag toggle silently clobbered its sibling enrollment.
+        wrapped = body.get('wrappedEnrolled')
+        radar = body.get('releaseRadarEnrolled')
 
         response = update_user_table_enrollments(
             caller_email,
