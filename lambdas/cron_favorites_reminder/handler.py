@@ -14,6 +14,7 @@ favorites-enrollment flag.
 from datetime import datetime, timezone
 
 from lambdas.common.constants import USERS_TABLE_NAME
+from lambdas.common.cron_runs_dynamo import record_cron_run
 from lambdas.common.dynamo_helpers import full_table_scan
 from lambdas.common.errors import handle_errors
 from lambdas.common.favorites_dynamo import get_reminder_marker, put_reminder_marker
@@ -24,10 +25,10 @@ from lambdas.common.utility_helpers import success_response
 log = get_logger(__file__)
 
 HANDLER = "cron_favorites_reminder"
+CRON_NAME = "favorites-reminder"
 
 
-@handle_errors(HANDLER)
-def handler(event, context):
+def _run():
     year = datetime.now(timezone.utc).year
     log.info(f"🎧 Starting favorites reminder cron for {year}...")
 
@@ -63,8 +64,20 @@ def handler(event, context):
         f"sent={successful} failed={failed} skipped={skipped}"
     )
 
-    return success_response({
-        "successfulEmails": successful,
-        "failedEmails": failed,
-        "skipped": skipped,
-    }, is_api=False)
+    return successful, failed, skipped
+
+
+@handle_errors(HANDLER)
+def handler(event, context):
+    stats: dict = {}
+
+    def _wrapped():
+        successful, failed, skipped = _run()
+        stats["items"] = successful + failed + skipped
+        return success_response({
+            "successfulEmails": successful,
+            "failedEmails": failed,
+            "skipped": skipped,
+        }, is_api=False)
+
+    return record_cron_run(CRON_NAME, _wrapped, items=lambda: stats.get("items"))

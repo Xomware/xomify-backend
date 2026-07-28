@@ -129,13 +129,13 @@ def _excluded_ids(email: str, year: Any, list_id: str | None) -> set[str]:
     return {i.get("spotifyId") for i in (row.get("items") or []) if i.get("spotifyId")}
 
 
-def _aggregate(category: str, top_items: dict) -> dict[str, dict]:
-    """spotifyId -> {fields..., score} aggregated + max-scored across ranges."""
+def _aggregate(category: str, top_items: dict, ranges: tuple[str, ...]) -> dict[str, dict]:
+    """spotifyId -> {fields..., score} scored across the requested time ranges."""
     source = _source_by_range(category, top_items)
     normalize = _normalizer(category)
     scored: dict[str, dict] = {}
 
-    for term in _TIME_RANGES:
+    for term in ranges:
         entities = source.get(term) or []
         if not isinstance(entities, list):
             continue
@@ -170,6 +170,16 @@ def handler(event, context):
             field="category",
         )
 
+    # `range` scopes recommendations to a single listening window's top-items.
+    # Defaults to short_term (recent taste). Previously recs blended all ranges.
+    time_range = params.get("range") or "short_term"
+    if time_range not in _TIME_RANGES:
+        raise ValidationError(
+            "range must be one of short_term|medium_term|long_term",
+            handler=HANDLER,
+            field="range",
+        )
+
     list_id = params.get("listId")
     year_raw = params.get("year")
     year: int | None = None
@@ -181,11 +191,11 @@ def handler(event, context):
 
     log.info(
         f"favorites_recommendations email={email} category={category} "
-        f"listId={list_id} year={year}"
+        f"listId={list_id} year={year} range={time_range}"
     )
 
     top_items = _load_top_items(email)
-    scored = _aggregate(category, top_items)
+    scored = _aggregate(category, top_items, (time_range,))
     excluded = _excluded_ids(email, year, list_id)
 
     recommendations = [
@@ -197,5 +207,6 @@ def handler(event, context):
     return success_response({
         "category": category,
         "listId": list_id,
+        "range": time_range,
         "recommendations": recommendations,
     })

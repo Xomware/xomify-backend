@@ -25,6 +25,7 @@ import boto3
 
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
+from lambdas.common.cron_runs_dynamo import record_cron_run
 from lambdas.common.utility_helpers import success_response
 from lambdas.common.constants import NOTIFICATIONS_SEND_FUNCTION_NAME
 from lambdas.common.device_tokens_dynamo import (
@@ -37,6 +38,7 @@ from lambdas.common.shares_dynamo import list_shares_for_user
 log = get_logger(__file__)
 
 HANDLER = "cron_shares_digest"
+CRON_NAME = "shares-digest"
 DIGEST_WINDOW_DAYS = 7
 
 _lambda_client = boto3.client("lambda", region_name="us-east-1")
@@ -99,10 +101,7 @@ def _invoke_digest_push(email: str, count: int) -> None:
     log.info(f"Digest push dispatched to {email} (count={count})")
 
 
-@handle_errors(HANDLER)
-def handler(event, context):
-    log.info("Starting weekly shares digest cron")
-
+def _run() -> dict:
     tokens = list(scan_tokens_for_digest())
     grouped = group_tokens_by_email(tokens)
     cutoff = _window_cutoff_iso()
@@ -140,4 +139,18 @@ def handler(event, context):
         "cutoff": cutoff,
     }
     log.info(f"Weekly digest cron complete: {result}")
-    return success_response(result, is_api=False)
+    return result
+
+
+@handle_errors(HANDLER)
+def handler(event, context):
+    log.info("Starting weekly shares digest cron")
+
+    stats: dict = {}
+
+    def _wrapped():
+        result = _run()
+        stats["items"] = result.get("processed")
+        return success_response(result, is_api=False)
+
+    return record_cron_run(CRON_NAME, _wrapped, items=lambda: stats.get("items"))

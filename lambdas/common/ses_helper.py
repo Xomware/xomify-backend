@@ -2,6 +2,7 @@ import boto3
 from botocore.exceptions import ClientError
 from lambdas.common.constants import FROM_EMAIL, AWS_DEFAULT_REGION, XOMIFY_URL
 from lambdas.common.logger import get_logger
+from lambdas.common.notification_log_dynamo import record_notification
 
 from lambdas.common.release_radar_email_template import (
     generate_release_radar_email,
@@ -60,15 +61,28 @@ def send_wrapped_email(to_email: str, subject: str, html_body: str, text_body: s
         
         message_id = response.get('MessageId', 'unknown')
         log.info(f"Email sent to {to_email}, MessageId: {message_id}")
+        record_notification(
+            channel="email", to_email=to_email, subject=subject,
+            body_preview=text_body, status="sent",
+        )
         return True
-        
+
     except ClientError as err:
         error_code = err.response['Error']['Code']
         error_message = err.response['Error']['Message']
         log.error(f"SES ClientError sending to {to_email}: {error_code} - {error_message}")
+        record_notification(
+            channel="email", to_email=to_email, subject=subject,
+            body_preview=text_body, status="failed",
+            error=f"{error_code} - {error_message}",
+        )
         raise Exception(f"SES Error: {error_code} - {error_message}") from err
     except Exception as err:
         log.error(f"Error sending email to {to_email}: {err}")
+        record_notification(
+            channel="email", to_email=to_email, subject=subject,
+            body_preview=text_body, status="failed", error=str(err),
+        )
         raise Exception(f"Send Email Error: {err}") from err
 
 
@@ -132,15 +146,28 @@ def send_favorites_reminder_email(to_email: str, user_name: str, year: int) -> b
         )
         message_id = response.get('MessageId', 'unknown')
         log.info(f"Favorites reminder sent to {to_email}, MessageId: {message_id}")
+        record_notification(
+            channel="email", to_email=to_email, subject=subject,
+            body_preview=text_body, status="sent",
+        )
         return True
 
     except ClientError as err:
         error_code = err.response['Error']['Code']
         error_message = err.response['Error']['Message']
         log.error(f"SES ClientError sending favorites reminder to {to_email}: {error_code} - {error_message}")
+        record_notification(
+            channel="email", to_email=to_email, subject=f"Set your {year} favorites",
+            body_preview="", status="failed",
+            error=f"{error_code} - {error_message}",
+        )
         raise Exception(f"SES Error: {error_code} - {error_message}") from err
     except Exception as err:
         log.error(f"Error sending favorites reminder to {to_email}: {err}")
+        record_notification(
+            channel="email", to_email=to_email, subject=f"Set your {year} favorites",
+            body_preview="", status="failed", error=str(err),
+        )
         raise Exception(f"Send Favorites Reminder Error: {err}") from err
 
 
@@ -247,14 +274,26 @@ def send_release_radar_email(
         
         message_id = response.get('MessageId')
         log.info(f"Email sent to {to_email}, MessageId: {message_id}")
+        record_notification(
+            channel="email", to_email=to_email, subject=subject,
+            body_preview=text_body, status="sent",
+        )
         return True
-        
+
     except ClientError as err:
         error_code = err.response['Error']['Code']
         error_msg = err.response['Error']['Message']
         log.error(f"SES error sending to {to_email}: {error_code} - {error_msg}")
+        record_notification(
+            channel="email", to_email=to_email, subject="Release Radar",
+            body_preview="", status="failed", error=f"{error_code} - {error_msg}",
+        )
         return False
-        
+
     except Exception as err:
         log.error(f"Error sending email to {to_email}: {err}")
+        record_notification(
+            channel="email", to_email=to_email, subject="Release Radar",
+            body_preview="", status="failed", error=str(err),
+        )
         return False

@@ -37,6 +37,16 @@ FAVORITES_TABLE_NAME = os.environ.get('FAVORITES_TABLE_NAME', '')
 BROADCASTS_TABLE_NAME = os.environ.get('BROADCASTS_TABLE_NAME', '')
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'dominickj.giordano@gmail.com')
 USER_LIKES_TABLE_NAME = os.environ.get("USER_LIKES_TABLE_NAME", "")
+
+# Admin observability instrumentation tables (admin portal)
+REQUEST_LOG_TABLE_NAME = os.environ.get('REQUEST_LOG_TABLE_NAME', '')
+CRON_RUNS_TABLE_NAME = os.environ.get('CRON_RUNS_TABLE_NAME', '')
+NOTIFICATION_LOG_TABLE_NAME = os.environ.get('NOTIFICATION_LOG_TABLE_NAME', '')
+VISITS_TABLE_NAME = os.environ.get('VISITS_TABLE_NAME', '')
+
+# Retention (days) — app-side TTL stamping; infra enables the TTL attribute.
+REQUEST_LOG_TTL_DAYS = 14
+VISITS_TTL_DAYS = 30
 USER_LIKES_EMAIL_ADDED_INDEX = os.environ.get("USER_LIKES_EMAIL_ADDED_INDEX", "email-addedAt-index")
 
 # Cross-lambda invocation (backend-interactions-and-notifications sub-feature)
