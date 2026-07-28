@@ -109,6 +109,9 @@ def test_cache_hit_returns_cached_without_spotify_call(
     body = json.loads(response["body"])
     assert body["tracks"]["short_term"][0]["name"] == "Cached Song"
     assert "meta" not in body  # no failed ranges
+    # Derived albums are injected on the cache-hit path.
+    assert "albums" in body
+    assert set(body["albums"].keys()) == {"short_term", "medium_term", "long_term"}
     mock_get_user.assert_not_called()
     mock_fetch.assert_not_called()
     mock_set_cached.assert_not_called()
@@ -140,10 +143,15 @@ def test_cache_miss_full_success_writes_cache_and_returns_full(
     assert body["artists"]["medium_term"][0]["name"] == "Live Medium Artist"
     assert body["genres"]["long_term"]["jazz"] == 3
     assert "meta" not in body
+    # Derived albums are injected on the cache-miss path too.
+    assert set(body["albums"].keys()) == {"short_term", "medium_term", "long_term"}
 
     mock_get_user.assert_called_once_with("test@example.com")
     mock_fetch.assert_called_once_with(sample_user)
+    # The cached payload must remain the lean {tracks,artists,genres} shape —
+    # albums are derived at read time, never written to the cache.
     mock_set_cached.assert_called_once_with("test@example.com", live_payload)
+    assert "albums" not in live_payload
 
 
 @patch("lambdas.user_top_items.handler.set_cached")

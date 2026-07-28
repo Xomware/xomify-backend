@@ -138,6 +138,18 @@ class ValidationError(XomifyError):
         )
 
 
+class ForbiddenError(XomifyError):
+    """Raised when an authenticated caller lacks permission for an action."""
+
+    def __init__(self, message: str = "Forbidden", handler: str = "unknown", function: str = "unknown"):
+        super().__init__(
+            message=message,
+            handler=handler,
+            function=function,
+            status=403
+        )
+
+
 class NotFoundError(XomifyError):
     """Raised when a resource is not found."""
     

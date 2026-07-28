@@ -28,6 +28,7 @@ from typing import Any
 from lambdas.common.dynamo_helpers import get_user_table_data
 from lambdas.common.errors import handle_errors
 from lambdas.common.logger import get_logger
+from lambdas.common.top_albums import derive_albums_by_range
 from lambdas.common.top_items_cache import get_cached, set_cached
 from lambdas.common.top_items_fetch import (
     _TIME_RANGES,
@@ -56,7 +57,9 @@ def handler(event: dict, context: Any) -> dict:
     cached = get_cached(caller_email)
     if cached is not None:
         log.info(f"user_top_items cache=hit email={caller_email}")
-        return success_response(cached)
+        enriched = dict(cached)
+        enriched["albums"] = derive_albums_by_range(cached.get("tracks") or {})
+        return success_response(enriched)
 
     log.info(f"user_top_items cache=miss email={caller_email}")
     user = get_user_table_data(caller_email)
@@ -79,6 +82,7 @@ def handler(event: dict, context: Any) -> dict:
         )
 
     response_body: dict = dict(payload)
+    response_body["albums"] = derive_albums_by_range(payload.get("tracks") or {})
     if failed_ranges:
         response_body["meta"] = {"failed_ranges": failed_ranges}
 

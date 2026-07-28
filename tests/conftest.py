@@ -30,6 +30,9 @@ _TEST_ENV_VARS = {
     "INVITES_TABLE_NAME": "xomify-invites-test",
     "SHARES_EMAIL_INDEX": "email-createdAt-index",
     "INVITE_URL_TEMPLATE": "https://xomify.test/invite/{code}",
+    "FAVORITES_TABLE_NAME": "xomify-favorites-test",
+    "BROADCASTS_TABLE_NAME": "xomify-broadcasts-test",
+    "ADMIN_EMAIL": "admin@example.com",
 }
 for key, value in _TEST_ENV_VARS.items():
     os.environ.setdefault(key, value)
