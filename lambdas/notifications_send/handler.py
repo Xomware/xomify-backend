@@ -29,6 +29,7 @@ from lambdas.common.errors import handle_errors, ValidationError
 from lambdas.common.utility_helpers import success_response
 from lambdas.common.device_tokens_dynamo import delete_token, list_tokens_for_user
 from lambdas.common.apns_client import get_client
+from lambdas.common.notification_log_dynamo import record_notification
 
 log = get_logger(__file__)
 
@@ -116,14 +117,27 @@ def handler(event, context):
             )
         except Exception as err:
             log.error(f"APNs send threw for {email}: {err}")
+            record_notification(
+                channel="push", to_email=email, subject=title,
+                body_preview=body_text, status="failed", error=str(err),
+            )
             failed += 1
             continue
 
         status = result.get("statusCode")
         if result.get("ok"):
             sent += 1
+            record_notification(
+                channel="push", to_email=email, subject=title,
+                body_preview=body_text, status="sent",
+            )
         else:
             failed += 1
+            record_notification(
+                channel="push", to_email=email, subject=title,
+                body_preview=body_text, status="failed",
+                error=f"apns status {status}",
+            )
             if status == 410:
                 # Unregistered — prune the token.
                 try:

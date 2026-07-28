@@ -8,6 +8,7 @@ import asyncio
 import aiohttp
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
+from lambdas.common.cron_runs_dynamo import record_cron_run
 from lambdas.common.utility_helpers import success_response
 from lambdas.common.dynamo_helpers import full_table_scan
 from lambdas.common.constants import USERS_TABLE_NAME
@@ -16,6 +17,7 @@ from lambdas.common.spotify import Spotify
 log = get_logger(__file__)
 
 HANDLER = 'cron_token_keepalive'
+CRON_NAME = 'token-keepalive'
 
 
 async def refresh_user_token(user: dict, session: aiohttp.ClientSession) -> dict:
@@ -80,14 +82,19 @@ async def keepalive_all_tokens(event: dict) -> tuple[list, list]:
 def handler(event, context):
     log.info("Starting monthly token keepalive cron job...")
 
-    successes, failures = asyncio.run(keepalive_all_tokens(event))
+    stats: dict = {}
 
-    return success_response({
-        "refreshedUsers": successes,
-        "failedUsers": failures,
-        "summary": {
-            "total": len(successes) + len(failures),
-            "refreshed": len(successes),
-            "failed": len(failures)
-        }
-    }, is_api=False)
+    def _wrapped():
+        successes, failures = asyncio.run(keepalive_all_tokens(event))
+        stats["items"] = len(successes) + len(failures)
+        return success_response({
+            "refreshedUsers": successes,
+            "failedUsers": failures,
+            "summary": {
+                "total": len(successes) + len(failures),
+                "refreshed": len(successes),
+                "failed": len(failures)
+            }
+        }, is_api=False)
+
+    return record_cron_run(CRON_NAME, _wrapped, items=lambda: stats.get("items"))

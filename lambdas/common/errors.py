@@ -11,6 +11,7 @@ Features:
 """
 
 import json
+import time
 import traceback
 from typing import Optional
 from lambdas.common.logger import get_logger
@@ -376,6 +377,85 @@ def log_error_context(handler_name: str, function_name: str, event: dict, contex
 
 
 # ============================================
+# Request-log instrumentation hook (admin Health)
+# ============================================
+
+def _is_http_event(event) -> bool:
+    """
+    True for API Gateway (REST proxy) invocations. False for cron
+    (`source == aws.events`) and internal direct-invoke payloads (e.g.
+    notifications_send), so instrumentation is a no-op for non-HTTP events.
+    """
+    if not isinstance(event, dict):
+        return False
+    if event.get("source") == "aws.events":
+        return False
+    if event.get("httpMethod") or event.get("resource") or event.get("rawPath"):
+        return True
+    request_context = event.get("requestContext")
+    if isinstance(request_context, dict) and (
+        "http" in request_context or "resourcePath" in request_context
+    ):
+        return True
+    return False
+
+
+def _log_request_safe(event, response, duration_ms: int, error: Optional[str]) -> None:
+    """
+    Persist a request-log row + stamp the caller's `lastSeen`. Entirely
+    best-effort: any failure here is swallowed so instrumentation can never
+    affect the response returned to the client.
+    """
+    try:
+        if not _is_http_event(event):
+            return
+
+        # No-op unless the request-log table is provisioned. Keeps the hook
+        # inert in environments (and unit tests) where instrumentation isn't
+        # wired up, so it never makes stray DynamoDB calls.
+        from lambdas.common import constants
+        if not constants.REQUEST_LOG_TABLE_NAME:
+            return
+
+        # Lazy imports keep the instrumentation off the import-time hot path
+        # and avoid any chance of a circular import at module load.
+        from lambdas.common.request_log_dynamo import (
+            record_request,
+            upsert_last_seen,
+        )
+        from lambdas.common.utility_helpers import get_caller_email
+
+        method = event.get("httpMethod") or (
+            (event.get("requestContext") or {}).get("http") or {}
+        ).get("method") or "unknown"
+        path = event.get("resource") or event.get("path") or event.get("rawPath") or "unknown"
+
+        status = 0
+        if isinstance(response, dict):
+            status = int(response.get("statusCode") or 0)
+
+        email = ""
+        try:
+            email = get_caller_email(event) or ""
+        except Exception:  # noqa: BLE001 - anonymous/public callers are fine
+            email = ""
+
+        record_request(
+            path=path,
+            method=method,
+            status=status,
+            email=email,
+            duration_ms=duration_ms,
+            error=error,
+        )
+
+        if email:
+            upsert_last_seen(email)
+    except Exception as err:  # noqa: BLE001 - instrumentation must never raise
+        log.warning(f"request-log hook failed (ignored): {err}")
+
+
+# ============================================
 # Error Handler Decorator
 # ============================================
 
@@ -399,14 +479,20 @@ def handle_errors(handler_name: str, log_context: bool = True):
     """
     def decorator(func):
         def wrapper(event, context):
+            start = time.perf_counter()
+            response = None
+            err_text = None
             try:
-                return func(event, context)
+                response = func(event, context)
+                return response
             except XomifyError as e:
                 # Log Xomify errors with context
                 e.log_error()
                 if log_context:
                     log_error_context(handler_name, func.__name__, event, context)
-                return e.to_response()
+                err_text = e.message
+                response = e.to_response()
+                return response
             except Exception as e:
                 # Catch unexpected errors
                 log.error(f"💥 Unexpected error in {handler_name}: {str(e)}")
@@ -422,13 +508,20 @@ def handle_errors(handler_name: str, log_context: bool = True):
                 # Fall back to repr / class name so the client always sees
                 # something actionable instead of an empty string.
                 raw_message = str(e) or repr(e) or e.__class__.__name__
+                err_text = raw_message
                 error = XomifyError(
                     message=raw_message,
                     handler=handler_name,
                     function=func.__name__,
                     status=500
                 )
-                return error.to_response()
+                response = error.to_response()
+                return response
+            finally:
+                # Request-log instrumentation (admin Health). Best-effort and
+                # isolated — never affects the response above.
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                _log_request_safe(event, response, duration_ms, err_text)
         return wrapper
     return decorator
 
