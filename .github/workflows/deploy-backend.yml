@@ -214,6 +214,9 @@ jobs:
       matrix:
         lambda: ${{ fromJson(needs.detect-changes.outputs.changed_lambdas) }}
       fail-fast: false
+      # Cap concurrency so we don't hammer the Lambda API (TooManyRequestsException)
+      # when many functions change at once. Tune down further if throttling persists.
+      max-parallel: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -237,31 +240,63 @@ jobs:
           # Convert underscores to hyphens for AWS function names
           FUNCTION_NAME=$(echo $FUNCTION_NAME | tr '_' '-')
 
-          echo "Deploying code for $FUNCTION_NAME"
-          aws lambda update-function-code \
-            --function-name $FUNCTION_NAME \
-            --zip-file fileb://${{ matrix.lambda }}.zip \
-            --region $AWS_REGION
+          # Retry helper: up to 5 attempts w/ exponential backoff (3s, 6s, 12s, 24s
+          # between attempts). Retries on ANY non-zero exit -- this covers both
+          # Lambda API throttling (TooManyRequestsException / transient 5xx) AND the
+          # just-created-function race (ResourceNotFoundException when this step runs
+          # right after `terraform apply` and the function isn't visible to the
+          # control plane yet). A short wait lets either condition clear on its own.
+          # Idempotent: update-function-code/-configuration are safe to call again.
+          retry_aws() {
+            local desc="$1"; shift
+            local max_attempts=5
+            local delay=3
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "❌ $desc failed after $attempt attempts"
+                return 1
+              fi
+              echo "⚠️  $desc failed (attempt $attempt/$max_attempts), retrying in ${delay}s..."
+              sleep "$delay"
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+            done
+            echo "✅ $desc succeeded on attempt $attempt"
+          }
 
-          # Wait for function to finish updating before config change
+          echo "Deploying code for $FUNCTION_NAME"
+          retry_aws "update-function-code for $FUNCTION_NAME" \
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --zip-file "fileb://${{ matrix.lambda }}.zip" \
+              --region "$AWS_REGION"
+
+          # Wait for function to finish updating before config change. Wrapped in
+          # the same retry helper since the waiter's polling calls can also be
+          # throttled under high fan-out.
           echo "Waiting for function update to complete..."
-          aws lambda wait function-updated \
-            --function-name $FUNCTION_NAME \
-            --region $AWS_REGION
+          retry_aws "wait function-updated (post code) for $FUNCTION_NAME" \
+            aws lambda wait function-updated \
+              --function-name "$FUNCTION_NAME" \
+              --region "$AWS_REGION"
 
           # If layer was updated, also update config (only after code update completes)
           if [ "${{ needs.deploy-layer.outputs.layer_arn }}" != "" ]; then
             echo "Updating layer configuration for $FUNCTION_NAME"
-            aws lambda update-function-configuration \
-              --function-name $FUNCTION_NAME \
-              --layers ${{ needs.deploy-layer.outputs.layer_arn }} \
-              --region $AWS_REGION
+            retry_aws "update-function-configuration for $FUNCTION_NAME" \
+              aws lambda update-function-configuration \
+                --function-name "$FUNCTION_NAME" \
+                --layers "${{ needs.deploy-layer.outputs.layer_arn }}" \
+                --region "$AWS_REGION"
 
-            # Wait for config update to complete
+            # Wait for config update to complete before declaring success, so a
+            # ResourceConflictException can't leak into whatever runs next.
             echo "Waiting for configuration update to complete..."
-            aws lambda wait function-updated \
-              --function-name $FUNCTION_NAME \
-              --region $AWS_REGION
+            retry_aws "wait function-updated (post config) for $FUNCTION_NAME" \
+              aws lambda wait function-updated \
+                --function-name "$FUNCTION_NAME" \
+                --region "$AWS_REGION"
           fi
 
           echo "✅ $FUNCTION_NAME deployment complete"
