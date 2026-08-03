@@ -42,6 +42,9 @@ class Spotify:
         
         # Auth - initialized later for async
         self.access_token: str = None
+        # Seconds until the current access token expires (populated by the sync
+        # refresh path). Spotify short-lived tokens default to 3600s.
+        self.token_expires_in: int | None = None
         self.headers: dict = {}
         
         # Initialize synchronously if no aiohttp session
@@ -183,9 +186,13 @@ class Spotify:
             if response.status_code != 200:
                 raise Exception(f"Error refreshing token: {response_data}")
 
+            # Capture time-to-expiry so callers that need to surface it (e.g. the
+            # admin impersonation-token endpoint) can, without re-deriving it.
+            self.token_expires_in = response_data.get('expires_in')
+
             log.info("Successfully retrieved spotify access token!")
             return response_data['access_token']
-            
+
         except Exception as err:
             log.error(f"Get Spotify Access Token: {err}")
             raise Exception(f"Get Spotify Access Token: {err}") from err
