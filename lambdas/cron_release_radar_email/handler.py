@@ -24,7 +24,11 @@ def handler(event, context):
 
     def _wrapped():
         successes, failures, skipped = asyncio.run(release_radar_email_cron_job(event))
-        stats["items"] = len(successes) + len(failures) + len(skipped)
+        # successes/failures/skipped may be counts (int) or collections -- handle both.
+        stats["items"] = sum(
+            v if isinstance(v, int) else len(v)
+            for v in (successes, failures, skipped)
+        )
         return success_response({
             "successfulEmails": successes,
             "failedEmails": failures,
