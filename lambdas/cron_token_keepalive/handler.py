@@ -86,7 +86,7 @@ def handler(event, context):
 
     def _wrapped():
         successes, failures = asyncio.run(keepalive_all_tokens(event))
-        stats["items"] = len(successes) + len(failures)
+        stats["items"] = sum(v if isinstance(v, int) else len(v) for v in (successes, failures))
         return success_response({
             "refreshedUsers": successes,
             "failedUsers": failures,

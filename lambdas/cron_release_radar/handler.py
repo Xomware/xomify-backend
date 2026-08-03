@@ -24,7 +24,7 @@ def handler(event, context):
 
     def _wrapped():
         successes, failures = asyncio.run(release_radar_cron_job(event))
-        stats["items"] = len(successes) + len(failures)
+        stats["items"] = sum(v if isinstance(v, int) else len(v) for v in (successes, failures))
         return success_response({
             "successfulUsers": successes,
             "failedUsers": failures
