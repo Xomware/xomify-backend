@@ -6,8 +6,14 @@ The single entry point every producer uses:
     from lambdas.common.notify import notify
     notify("share_received", recipient_email, actor_email=sender, share_id=..., ...)
 
-It resolves the kind from the registry, renders title/body/route, applies
-coalescing where the kind asks for it, and async-invokes `notifications_send`.
+It resolves the kind from the registry, renders title/body/route, writes the
+inbox row, applies coalescing where the kind asks for it, and async-invokes
+`notifications_send`.
+
+INBOX AND PUSH ARE INDEPENDENT. The inbox row is written even when the device
+has that kind muted, and even when the user has no device at all — muting a
+push means "do not interrupt me", not "hide this from my history". Web has no
+APNs token at all and would otherwise have an permanently empty inbox.
 
 TWO RULES, both non-negotiable:
 
@@ -40,6 +46,7 @@ from lambdas.common.notification_pending_dynamo import (
     claim_or_merge,
     coalesce_key,
 )
+from lambdas.common.notifications_dynamo import put_notification
 
 log = get_logger(__file__)
 
@@ -126,22 +133,39 @@ def _dispatch(
     *,
     merged: bool,
 ) -> None:
-    """Render and async-invoke notifications_send."""
+    """Write the inbox row, then async-invoke notifications_send."""
+    title_tpl = (kind.merged_title if merged and kind.merged_title else kind.title)
+    body_tpl = (kind.merged_body if merged and kind.merged_body else kind.body)
+
+    title = render(title_tpl, ctx)
+    body_text = render(body_tpl, ctx)
+    route = render(kind.route, ctx) if kind.route else None
+
+    # Inbox first, and unconditionally — see the module docstring. A user with
+    # this kind muted, or on web with no APNs token at all, still gets history.
+    put_notification(
+        email=recipient_email,
+        kind=kind.key,
+        title=title,
+        body=body_text,
+        route=route,
+        actor_email=ctx.get("actor_email"),
+        actor_name=ctx.get("actor_name"),
+        image_url=ctx.get("image_url"),
+    )
+
     if not NOTIFICATIONS_SEND_FUNCTION_NAME:
         log.warning("NOTIFICATIONS_SEND_FUNCTION_NAME unset — skipping push")
         return
 
-    title_tpl = (kind.merged_title if merged and kind.merged_title else kind.title)
-    body_tpl = (kind.merged_body if merged and kind.merged_body else kind.body)
-
     event: dict[str, Any] = {
         "kind": kind.key,
         "email": recipient_email,
-        "title": render(title_tpl, ctx),
-        "body": render(body_tpl, ctx),
+        "title": title,
+        "body": body_text,
         "customData": {
             **{k: v for k, v in ctx.items() if v is not None},
-            "route": render(kind.route, ctx) if kind.route else None,
+            "route": route,
             "pushType": kind.key,
         },
     }
