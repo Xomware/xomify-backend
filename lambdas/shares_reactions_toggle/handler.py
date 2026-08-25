@@ -46,6 +46,7 @@ from lambdas.common.utility_helpers import (
 )
 from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_reactions_dynamo import (
+    REACTION_EMOJI,
     VALID_REACTIONS,
     add_reaction,
     build_reaction_summary,
@@ -106,6 +107,21 @@ def handler(event, context):
     else:
         add_reaction(share_id, email, reaction)
         active = True
+
+    # Only on ADD. Un-reacting is not an event worth a push, and pushing on
+    # both edges turns a toggle into a notification machine gun.
+    if active:
+        from lambdas.common.notify import display_name_for, notify
+
+        notify(
+            "share_reaction",
+            share.get("email") or share.get("sharedBy") or "",
+            actor_email=email,
+            actor_name=display_name_for(email),
+            emoji=REACTION_EMOJI.get(reaction, reaction),
+            track_name=share.get("trackName"),
+            share_id=share_id,
+        )
 
     summary = build_reaction_summary(share_id, email)
 

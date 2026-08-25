@@ -33,6 +33,7 @@ from lambdas.common.shares_dynamo import get_share
 from lambdas.common.share_comments_dynamo import create_comment
 from lambdas.common.share_visibility import viewer_can_see_share
 from lambdas.common.dynamo_helpers import batch_get_users
+from lambdas.common.notify import notify
 
 log = get_logger(__file__)
 
@@ -104,6 +105,19 @@ def handler(event, context):
         log.warning(f"Profile hydrate failed for {email}: {err}")
 
     profile = profile_map.get(email) or {}
+
+    # notify() suppresses the self-case, so commenting on your own share is a
+    # no-op here rather than something this handler has to special-case.
+    notify(
+        "share_comment",
+        share.get("email") or share.get("sharedBy") or "",
+        actor_email=email,
+        actor_name=(profile.get("displayName") or "").strip() or email.split("@")[0],
+        comment_preview=(text[:120] + "…") if len(text) > 120 else text,
+        share_id=share_id,
+        track_name=share.get("trackName"),
+    )
+
     payload = {
         "commentId": comment.get("commentId"),
         "shareId": comment.get("shareId"),

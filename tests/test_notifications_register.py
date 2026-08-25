@@ -32,6 +32,14 @@ def _post_event(base: dict, body: dict) -> dict:
 def test_register_happy_path_uses_caller_email_from_context(
     mock_upsert: Any, mock_context: Any, authorized_event: Any
 ) -> None:
+    """
+    CONTRACT CHANGE (per-type preferences, B2): a registration that mentions no
+    flags now writes no flags. It used to coerce both legacy flags to True and
+    persist them, which would freeze today's defaults onto the row and destroy
+    the absent-means-registry-default fallback every new kind depends on.
+    """
+    mock_upsert.return_value = {"email": "alice@example.com"}
+
     event = _post_event(
         authorized_event(email="alice@example.com"),
         {"deviceToken": "abcdef0123456789"},
@@ -43,14 +51,18 @@ def test_register_happy_path_uses_caller_email_from_context(
     body = json.loads(response["body"])
     assert body["ok"] is True
     assert body["email"] == "alice@example.com"
-    assert body["digestEnabled"] is True
+
+    # Effective map is returned, resolved against the registry defaults.
+    assert body["preferences"]["queueNotificationsEnabled"] is True
+    assert body["preferences"]["digestEnabled"] is False
     assert body["queueNotificationsEnabled"] is True
 
     mock_upsert.assert_called_once_with(
         email="alice@example.com",
         device_token="abcdef0123456789",
-        digest_enabled=True,
-        queue_notifications_enabled=True,
+        preferences={},
+        digest_enabled=None,
+        queue_notifications_enabled=None,
     )
 
 
@@ -59,6 +71,7 @@ def test_register_ignores_email_in_body_prefers_context(
     mock_upsert: Any, mock_context: Any, authorized_event: Any
 ) -> None:
     """Spoofed body email must NOT win over the trusted authorizer context."""
+    mock_upsert.return_value = {"email": "trusted@example.com"}
     event = _post_event(
         authorized_event(email="trusted@example.com"),
         {"email": "spoofed@evil.com", "deviceToken": "abcdef0123456789"},
@@ -86,6 +99,14 @@ def test_register_honors_optional_flags(
         },
     )
 
+    # The response echoes what is STORED, not what was asked for, so the
+    # stubbed row has to look like the row DynamoDB would return.
+    mock_upsert.return_value = {
+        "email": "alice@example.com",
+        "digestEnabled": False,
+        "queueNotificationsEnabled": False,
+    }
+
     response = handler(event, mock_context)
 
     assert response["statusCode"] == 200
@@ -95,6 +116,7 @@ def test_register_honors_optional_flags(
     mock_upsert.assert_called_once_with(
         email="alice@example.com",
         device_token="abcdef0123456789",
+        preferences={},
         digest_enabled=False,
         queue_notifications_enabled=False,
     )

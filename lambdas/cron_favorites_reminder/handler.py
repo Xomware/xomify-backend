@@ -53,6 +53,18 @@ def _run():
 
         try:
             send_favorites_reminder_email(email, user.get("displayName") or "", year)
+
+            # Push alongside the email. Best-effort and AFTER the email, so a
+            # push failure can never cost someone the reminder they'd have got
+            # anyway — and it stays outside the try/except that counts a
+            # failure, because the email is what "sent" means here.
+            try:
+                from lambdas.common.notify import notify
+
+                notify("favorites_reminder", email, year=year)
+            except Exception as push_err:  # noqa: BLE001
+                log.warning(f"favorites_reminder push failed for {email}: {push_err}")
+
             put_reminder_marker(email, year)
             successful += 1
         except Exception as err:  # noqa: BLE001 - isolate per-user send failures

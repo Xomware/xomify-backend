@@ -47,6 +47,19 @@ VALID_REACTIONS: set[str] = {
     "thumbs_up",
 }
 
+#: Display glyph for each slug. Reactions are stored as SLUGS, not emoji, so
+#: anything rendering one for a human — a push body especially — has to map it.
+#: "Sam reacted fire" is not a sentence.
+REACTION_EMOJI: dict[str, str] = {
+    "fire": "🔥",
+    "heart": "❤️",
+    "laugh": "😂",
+    "mind_blown": "🤯",
+    "sad": "😢",
+    "thumbs_up": "👍",
+}
+
+
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()

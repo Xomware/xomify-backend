@@ -106,8 +106,13 @@ def handler(event, context):
             field="source",
         )
 
+    from lambdas.common.notify import display_name_for, notify
+
     listened: list[str] = []
     skipped: list[str] = []
+    # Resolved once, not per share — a 25-share batch should not be 25 profile
+    # reads for the same person.
+    actor_name = None
 
     for share_id in share_ids:
         share = get_share(share_id)
@@ -120,6 +125,24 @@ def handler(event, context):
         try:
             mark_listened(share_id, email, source=raw_source)
             listened.append(share_id)
+
+            # `author_create` is shares_create marking its own author as a
+            # listener — notifying them that they listened to their own share
+            # would be absurd. notify() would suppress it anyway, but skipping
+            # here avoids a pointless profile read.
+            if raw_source != "author_create":
+                if actor_name is None:
+                    actor_name = display_name_for(email)
+                notify(
+                    "share_listened",
+                    share.get("email") or share.get("sharedBy") or "",
+                    actor_email=email,
+                    subject_id=share_id,
+                    actor_name=actor_name,
+                    track_name=share.get("trackName"),
+                    artist_name=share.get("artistName"),
+                    share_id=share_id,
+                )
         except Exception as err:
             # Don't 500 the whole batch on a single row's DDB hiccup.
             log.error(

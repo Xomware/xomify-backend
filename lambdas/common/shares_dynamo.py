@@ -322,6 +322,35 @@ def scan_all_shares(page_size: int = 100):
 # ============================================
 # Threshold Notification Latch (idempotent)
 # ============================================
+def mark_rate_reminded(share_id: str) -> bool:
+    """
+    Atomically latch a share as having fired its rate reminder.
+
+    Same conditional-write trick as `mark_threshold_notified`: only one caller
+    can acquire the latch, so an overlapping cron run cannot double-remind. The
+    reminder is once per share EVER (epic decision 9) — if 24 hours did not get
+    someone to listen, a second nudge only teaches them to ignore the app.
+    """
+    try:
+        table = dynamodb.Table(SHARES_TABLE_NAME)
+        table.update_item(
+            Key={"shareId": share_id},
+            UpdateExpression="SET #a = :now",
+            ExpressionAttributeNames={"#a": "rateRemindedAt"},
+            ExpressionAttributeValues={":now": _iso_now()},
+            ConditionExpression="attribute_not_exists(#a)",
+        )
+        return True
+    except ClientError as err:
+        if err.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        log.error(f"mark_rate_reminded failed: {err}")
+        return False
+    except Exception as err:  # noqa: BLE001
+        log.error(f"mark_rate_reminded failed: {err}")
+        return False
+
+
 def mark_threshold_notified(share_id: str, threshold: int) -> bool:
     """
     Atomically mark a share as having fired its queue-threshold notification.
