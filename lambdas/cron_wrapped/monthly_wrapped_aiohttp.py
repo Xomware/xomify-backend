@@ -86,6 +86,15 @@ async def aiohttp_wrapped_chron_job(event) -> list:
     return successes, failures
 
 
+def _month_label(month_key: str) -> str:
+    """"2026-03" -> "March". A month key is a storage detail, not push copy."""
+    try:
+        year, month = month_key.split("-")
+        return datetime(int(year), int(month), 1).strftime("%B")
+    except Exception:
+        return "monthly"
+
+
 async def process_wrapped_user(user: dict, session: aiohttp.ClientSession, month_key: str) -> str:
     """
     Process a single user's monthly wrapped data.
@@ -178,7 +187,28 @@ async def process_wrapped_user(user: dict, session: aiohttp.ClientSession, month
         
         # Update user timestamp
         _update_user_timestamp(user)
-        
+
+        # Drop notification with a SNEAK PEEK. "Your March Wrapped is ready" is
+        # an announcement; naming the track it opens with is a reason to tap.
+        # The route deep-links straight into the playlist.
+        #
+        # Best-effort, like every other notification: a user whose Wrapped was
+        # generated must never see it fail because a push could not be built.
+        try:
+            from lambdas.common.notify import notify, sneak_peek
+
+            top = (spotify.top_tracks_short.track_list or [None])[0]
+            peek = sneak_peek(top)
+            notify(
+                "wrapped_drop",
+                email,
+                month=_month_label(month_key),
+                playlist_id=spotify.monthly_spotify_playlist.id,
+                **peek,
+            )
+        except Exception as err:
+            log.warning(f"[{email}] wrapped_drop notification failed: {err}")
+
         log.info(f"[{email}] ✅ Wrapped complete!")
         return email
         

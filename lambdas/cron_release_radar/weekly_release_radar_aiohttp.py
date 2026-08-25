@@ -194,6 +194,28 @@ async def process_user(
             playlist_id=playlist_id
         )
 
+        # Drop notification with a SNEAK PEEK, naming the release it leads with.
+        #
+        # An empty week is NOT notified — cron_shares_digest already set that
+        # precedent ("don't spam empty weeks"), and "0 new releases" is a push
+        # that only teaches people to swipe them away.
+        if releases:
+            try:
+                from lambdas.common.notify import notify
+
+                lead = releases[0]
+                notify(
+                    "release_radar_drop",
+                    email,
+                    release_count=len(releases),
+                    playlist_id=playlist_id,
+                    track_name=lead.get("albumName") or "",
+                    artist_name=lead.get("artistName") or "",
+                    image_url=lead.get("imageUrl"),
+                )
+            except Exception as err:
+                log.warning(f"[{email}] release_radar_drop notification failed: {err}")
+
         log.info(f"[{email}] Complete!")
 
         return {

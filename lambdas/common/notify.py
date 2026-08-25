@@ -269,3 +269,30 @@ def notify_friends_of(
     for recipient in emails:
         notify(kind_key, recipient, actor_email=actor_email, **ctx)
     return len(emails)
+
+
+def sneak_peek(raw_track: Optional[dict]) -> dict[str, Any]:
+    """
+    Pull the human-facing bits out of a raw Spotify track object.
+
+    This is what makes a playlist-drop push worth reading. "Your March Wrapped
+    is ready" is an announcement; "Starting with Midnight City — M83" is a
+    reason to tap. Returns empty strings rather than None so the templates
+    render something rather than the literal placeholder.
+    """
+    if not isinstance(raw_track, dict):
+        return {"track_name": "", "artist_name": "", "image_url": None}
+
+    artists = raw_track.get("artists") or []
+    artist_name = ""
+    if artists and isinstance(artists[0], dict):
+        artist_name = artists[0].get("name") or ""
+
+    images = ((raw_track.get("album") or {}).get("images")) or []
+    image_url = images[0].get("url") if images and isinstance(images[0], dict) else None
+
+    return {
+        "track_name": raw_track.get("name") or "",
+        "artist_name": artist_name,
+        "image_url": image_url,
+    }
