@@ -30,6 +30,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from lambdas.common.logger import get_logger
+
+log = get_logger(__file__)
+
 
 # ── Sections ────────────────────────────────────────────────────────────
 # Purely a presentation grouping for the Settings screens (iOS + web). The
@@ -291,6 +295,40 @@ def get_kind(key: str) -> Optional[NotificationKind]:
 def default_preferences() -> dict[str, bool]:
     """The preference map a brand-new device registration starts from."""
     return {k.opt_in_flag: k.default_opt_in for k in _KINDS}
+
+
+VALID_FLAGS: frozenset[str] = frozenset(k.opt_in_flag for k in _KINDS)
+
+
+def effective_preferences(token_row: dict) -> dict[str, bool]:
+    """
+    The full preference map for one device, defaults filled in.
+
+    A device row only ever stores the flags it has actually been told about.
+    This is what turns that sparse row into the complete picture a Settings
+    screen needs to render sixteen toggles.
+    """
+    return {k.opt_in_flag: is_opted_in(token_row, k) for k in _KINDS}
+
+
+def sanitize_preferences(raw: dict) -> dict[str, bool]:
+    """
+    Keep only flags this registry knows about, coerced to bool.
+
+    Unknown keys are DROPPED rather than written through. A client typo would
+    otherwise persist a junk attribute forever — the row has no schema to
+    reject it, and it would sit there looking meaningful.
+    """
+    clean: dict[str, bool] = {}
+    for key, value in (raw or {}).items():
+        if key not in VALID_FLAGS:
+            log.warning(f"ignoring unknown notification flag '{key}'")
+            continue
+        if isinstance(value, str):
+            clean[key] = value.strip().lower() in {"true", "1", "yes"}
+        else:
+            clean[key] = bool(value)
+    return clean
 
 
 def is_opted_in(token_row: dict, kind: NotificationKind) -> bool:

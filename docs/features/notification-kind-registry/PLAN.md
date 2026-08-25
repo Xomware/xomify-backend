@@ -84,8 +84,20 @@ Landed on `feature/notification-kind-registry`.
 
 ### Test environment finding (pre-existing, not caused by this work)
 
-The backend suite does not run on this machine: **50 failures and 74 collection errors on
-clean `master`**, all from `X | Y` union syntax (Python 3.10+) against a local Python
-3.9.6. CI runs 3.12 (`deploy-backend.yml`). The 25 tests added here pass locally because
-they only touch modules written with `Optional[...]`, but **the rest of this track's tests
-cannot be verified locally** — they need 3.12 installed, or CI.
+The default `python3` on this machine is 3.9.6, and the repo uses `X | Y` unions
+(3.10+) — `lambdas/common/errors.py:261` among others. Under 3.9 the suite collapses to
+50 failures and 74 collection errors on clean `master`.
+
+**It does run**, via the already-installed `uv` and Homebrew `python3.13`:
+
+```
+uv run --python 3.13 --with pytest --with boto3 --with requests \
+       --with aiohttp --with pyjwt --with cryptography python -m pytest -q
+```
+
+`--with-requirements requirements.txt` does NOT work — the pinned `cffi` fails to
+compile against Python 3.13 headers here. The explicit `--with` list above avoids it.
+
+**True baseline on 3.13: 14 failed, 600 passed.** All 14 are pre-existing favorites
+failures, unrelated to this track. Worth adding the uv invocation to the repo README so
+the next person doesn't conclude the suite is broken.
