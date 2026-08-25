@@ -15,6 +15,40 @@ from lambdas.common.errors import handle_errors
 from lambdas.common.logger import get_logger
 from lambdas.common.model_helpers import parse_model
 from lambdas.common.utility_helpers import parse_body, success_response
+import json
+import boto3
+from lambdas.common.constants import BROADCAST_FANOUT_FUNCTION_NAME
+
+_lambda_client = boto3.client("lambda")
+
+
+def _dispatch_broadcast_push(broadcast_id: str, title: str, body_text: str) -> None:
+    """
+    Hand the fan-out to a dedicated lambda, asynchronously.
+
+    Deliberately NOT done inline: reaching every user means a full users-table
+    scan plus one dispatch each. Inside this request handler the admin would
+    wait on all of it, and it would get quietly slower until it hit the
+    gateway timeout with no feedback. Fire-and-forget — the broadcast row is
+    already persisted, so a failed push never costs the broadcast itself.
+    """
+    if not BROADCAST_FANOUT_FUNCTION_NAME:
+        log.warning("BROADCAST_FANOUT_FUNCTION_NAME unset — skipping broadcast push")
+        return
+    try:
+        _lambda_client.invoke(
+            FunctionName=BROADCAST_FANOUT_FUNCTION_NAME,
+            InvocationType="Event",
+            Payload=json.dumps({
+                "broadcastId": broadcast_id,
+                "title": title,
+                "body": body_text,
+            }).encode("utf-8"),
+        )
+        log.info(f"broadcast fan-out dispatched for {broadcast_id}")
+    except Exception as err:  # noqa: BLE001
+        log.error(f"Failed to dispatch broadcast fan-out: {err}")
+
 
 log = get_logger(__file__)
 
@@ -58,6 +92,8 @@ def handler(event, context):
 
     log.info(f"admin_broadcasts_create by={admin_email} id={broadcast_id}")
     put_broadcast(item)
+
+    _dispatch_broadcast_push(broadcast_id, request.title, request.body)
 
     return success_response({
         "id": broadcast_id,
