@@ -84,20 +84,25 @@ Landed on `feature/notification-kind-registry`.
 
 ### Test environment finding (pre-existing, not caused by this work)
 
-The default `python3` on this machine is 3.9.6, and the repo uses `X | Y` unions
-(3.10+) — `lambdas/common/errors.py:261` among others. Under 3.9 the suite collapses to
-50 failures and 74 collection errors on clean `master`.
-
-**It does run**, via the already-installed `uv` and Homebrew `python3.13`:
+The default `python3` here is 3.9.6 and the repo uses `X | Y` unions (3.10+), so a plain
+`pytest` collapses into dozens of collection errors. It runs fine via the already-installed
+`uv` and Homebrew `python3.13`:
 
 ```
-uv run --python 3.13 --with pytest --with boto3 --with requests \
-       --with aiohttp --with pyjwt --with cryptography python -m pytest -q
+uv run --python 3.13 --with pytest --with boto3 --with requests --with aiohttp \
+       --with pyjwt --with cryptography --with pydantic python -m pytest -q
 ```
 
-`--with-requirements requirements.txt` does NOT work — the pinned `cffi` fails to
-compile against Python 3.13 headers here. The explicit `--with` list above avoids it.
+`--with-requirements requirements.txt` does NOT work — the pinned `cffi` fails to compile
+against 3.13 headers.
 
-**True baseline on 3.13: 14 failed, 600 passed.** All 14 are pre-existing favorites
-failures, unrelated to this track. Worth adding the uv invocation to the repo README so
-the next person doesn't conclude the suite is broken.
+**TRUE BASELINE: 660 passed, 0 failed.** Two earlier figures recorded here were wrong, both
+because of this environment rather than the code:
+
+| Reported | Cause | Actual |
+|----------|-------|--------|
+| "50 failed / 74 errors" | Python 3.9 vs 3.12 union syntax | not real |
+| "14 failed / 600 passed" | `pydantic` missing from the ephemeral env | **660 passed, 0 failed** |
+
+The suite is fully green. Worth putting that invocation in the README so nobody else
+concludes otherwise.

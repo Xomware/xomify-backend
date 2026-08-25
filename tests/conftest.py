@@ -38,6 +38,7 @@ _TEST_ENV_VARS = {
     "NOTIFICATION_PENDING_TABLE_NAME": "xomify-notification-pending-test",
     "NOTIFICATIONS_TABLE_NAME": "xomify-notifications-test",
     "NOTIFICATIONS_SEND_FUNCTION_NAME": "xomify-notifications-send-test",
+    "BROADCAST_FANOUT_FUNCTION_NAME": "xomify-notifications-broadcast-fanout-test",
 }
 for key, value in _TEST_ENV_VARS.items():
     os.environ.setdefault(key, value)

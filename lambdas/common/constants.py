@@ -51,6 +51,7 @@ USER_LIKES_EMAIL_ADDED_INDEX = os.environ.get("USER_LIKES_EMAIL_ADDED_INDEX", "e
 
 # Cross-lambda invocation (backend-interactions-and-notifications sub-feature)
 NOTIFICATIONS_SEND_FUNCTION_NAME = os.environ.get('NOTIFICATIONS_SEND_FUNCTION_NAME', '')
+BROADCAST_FANOUT_FUNCTION_NAME = os.environ.get('BROADCAST_FANOUT_FUNCTION_NAME', '')
 
 # APNs SSM parameter paths (populated by infra PR-A)
 APNS_AUTH_KEY_PARAM = os.environ.get('APNS_AUTH_KEY_PARAM', '/xomify/apns/AUTH_KEY')

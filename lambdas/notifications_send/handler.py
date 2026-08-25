@@ -43,14 +43,32 @@ HANDLER = "notifications_send"
 
 
 def _coerce_event(event: dict) -> dict:
-    """Accept both API Gateway shape and direct-invoke payload shape."""
-    if isinstance(event, dict) and isinstance(event.get("body"), str):
+    """
+    Accept both the API Gateway shape and a direct-invoke payload.
+
+    THE SUBTLETY THAT BIT THIS BEFORE: the direct-invoke payload has its OWN
+    `body` key — the notification's body text — which collides with API
+    Gateway's `body` envelope. The previous version saw a string under `body`,
+    tried to `json.loads` it, failed on ordinary prose like
+    "2 friends have queued Midnight City", and returned `{}`. Every direct
+    invoke was then rejected as missing its required fields, so nothing ever
+    sent.
+
+    Only unwrap when the string actually parses to a dict. Prose does not.
+    """
+    if not isinstance(event, dict):
+        return {}
+    raw = event.get("body")
+    if isinstance(raw, str):
         import json
         try:
-            return json.loads(event["body"])
+            parsed = json.loads(raw)
         except Exception:
-            return {}
-    return event or {}
+            return event
+        # A parsed scalar means `body` was the notification text, not an
+        # envelope — keep the original event.
+        return parsed if isinstance(parsed, dict) else event
+    return event
 
 
 @handle_errors(HANDLER)
