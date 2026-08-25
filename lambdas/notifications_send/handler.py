@@ -30,16 +30,16 @@ from lambdas.common.utility_helpers import success_response
 from lambdas.common.device_tokens_dynamo import delete_token, list_tokens_for_user
 from lambdas.common.apns_client import get_client
 from lambdas.common.notification_log_dynamo import record_notification
+from lambdas.common.notification_kinds import VALID_KINDS, get_kind, is_opted_in
 
 log = get_logger(__file__)
 
 HANDLER = "notifications_send"
 
-VALID_KINDS = {"queue_threshold", "digest"}
-OPT_IN_FLAG_BY_KIND = {
-    "queue_threshold": "queueNotificationsEnabled",
-    "digest": "digestEnabled",
-}
+# Kinds and their opt-in flags now come from the shared registry
+# (lambdas/common/notification_kinds.py) rather than being duplicated here.
+# This module used to hardcode the two-kind world; there are sixteen now, and a
+# second copy of that mapping is a second place to get it wrong.
 
 
 def _coerce_event(event: dict) -> dict:
@@ -70,6 +70,8 @@ def handler(event, context):
             function="handler",
             field="kind",
         )
+
+    kind_spec = get_kind(kind)
     if not email:
         raise ValidationError(
             message="email is required",
@@ -86,7 +88,6 @@ def handler(event, context):
         )
 
     tokens = list_tokens_for_user(email)
-    opt_in_flag = OPT_IN_FLAG_BY_KIND[kind]
 
     sent = 0
     failed = 0
@@ -96,8 +97,11 @@ def handler(event, context):
     client = get_client()
 
     for row in tokens:
-        # Default to True if the flag is absent (legacy rows).
-        if not bool(row.get(opt_in_flag, True)):
+        # An absent flag falls back to the KIND'S OWN default rather than a
+        # blanket True — see notification_kinds.is_opted_in. That is what lets
+        # fourteen new kinds ship without backfilling every device row, and it
+        # is also what stops `digest` reaching devices that never asked for it.
+        if not is_opted_in(row, kind_spec):
             skipped += 1
             continue
 

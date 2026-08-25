@@ -33,6 +33,10 @@ _TEST_ENV_VARS = {
     "FAVORITES_TABLE_NAME": "xomify-favorites-test",
     "BROADCASTS_TABLE_NAME": "xomify-broadcasts-test",
     "ADMIN_EMAIL": "admin@example.com",
+    "DEVICE_TOKENS_TABLE_NAME": "xomify-device-tokens-test",
+    "NOTIFICATION_LOG_TABLE_NAME": "xomify-notification-log-test",
+    "NOTIFICATION_PENDING_TABLE_NAME": "xomify-notification-pending-test",
+    "NOTIFICATIONS_SEND_FUNCTION_NAME": "xomify-notifications-send-test",
 }
 for key, value in _TEST_ENV_VARS.items():
     os.environ.setdefault(key, value)
