@@ -195,3 +195,77 @@ def dispatch_pending(row: dict[str, Any]) -> None:
         log.error(f"dispatch_pending: unusable row {row!r}")
         return
     _dispatch(kind, recipient, dict(row.get("ctx") or {}), merged=False)
+
+
+# ── Producer helpers ────────────────────────────────────────────────────
+
+#: Ceiling on a single share's fan-out. Shares are broadcast to the author's
+#: friends graph rather than addressed to one person, so one share is N pushes.
+#: This is a personal app with small graphs, but an unbounded fan-out inside a
+#: request handler is a latency cliff waiting to happen.
+MAX_FANOUT = 100
+
+
+def display_name_for(email: str) -> str:
+    """
+    Human name for a notification's actor.
+
+    Falls back to the email's local part rather than the full address —
+    "sam sent you a song" beats leaking someone's address onto a lock screen.
+    Import is local so `notify` stays cheap for producers that never need it.
+    """
+    if not email:
+        return "Someone"
+    try:
+        from lambdas.common.dynamo_helpers import batch_get_users
+
+        profile = (batch_get_users([email]) or {}).get(email) or {}
+        name = (profile.get("displayName") or "").strip()
+        if name:
+            return name
+    except Exception as err:  # noqa: BLE001
+        log.warning(f"display_name_for({email}) failed: {err}")
+    return email.split("@")[0]
+
+
+def notify_friends_of(
+    actor_email: str,
+    kind_key: str,
+    **ctx: Any,
+) -> int:
+    """
+    Fan one notification out to the actor's accepted friends.
+
+    Returns how many recipients were notified. Fail-open like everything else
+    on this path — a friends-graph read that falls over must not fail the write
+    that triggered it.
+    """
+    try:
+        from lambdas.common.friendships_dynamo import list_all_friends_for_user
+
+        friends = list_all_friends_for_user(actor_email) or []
+    except Exception as err:  # noqa: BLE001
+        log.error(f"fan-out friends lookup failed for {actor_email}: {err}")
+        return 0
+
+    # `status` MUST be checked. list_all_friends_for_user returns every row in
+    # the partition — pending requests and blocks included — so an unfiltered
+    # fan-out would push to people who declined you or blocked you outright.
+    emails: list[str] = []
+    for row in friends:
+        if not isinstance(row, dict) or row.get("status") != "accepted":
+            continue
+        candidate = row.get("friendEmail")
+        if candidate and candidate != actor_email and candidate not in emails:
+            emails.append(candidate)
+
+    if len(emails) > MAX_FANOUT:
+        log.warning(
+            f"fan-out for {actor_email} capped at {MAX_FANOUT} "
+            f"(graph has {len(emails)})"
+        )
+        emails = emails[:MAX_FANOUT]
+
+    for recipient in emails:
+        notify(kind_key, recipient, actor_email=actor_email, **ctx)
+    return len(emails)

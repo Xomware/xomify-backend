@@ -6,6 +6,7 @@ from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
 from lambdas.common.utility_helpers import success_response, parse_body, require_fields, get_caller_email
 from lambdas.common.friendships_dynamo import send_friend_request
+from lambdas.common.notify import display_name_for, notify
 
 log = get_logger(__file__)
 
@@ -23,5 +24,15 @@ def handler(event, context):
     log.info(f"User {email} is sending request to {request_email} to be a friend.")
     success = send_friend_request(email, request_email)
     log.info(f"Friend Request {'Success!' if success else 'Failure!'}")
+
+    # Only on a successful write — a failed request must not tell the target
+    # someone tried.
+    if success:
+        notify(
+            'friend_request',
+            request_email,
+            actor_email=email,
+            actor_name=display_name_for(email),
+        )
 
     return success_response({'success': success})

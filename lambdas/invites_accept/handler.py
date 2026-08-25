@@ -146,6 +146,16 @@ def handler(event, context):
 
     log.info(f"Invite {invite_code} accepted; {sender_email} <-> {email} now friends")
 
+    # Goes to the inviter — the accepter already knows they accepted.
+    from lambdas.common.notify import display_name_for, notify
+
+    notify(
+        'invite_accepted',
+        sender_email,
+        actor_email=email,
+        actor_name=display_name_for(email),
+    )
+
     return success_response({
         'ok': True,
         'senderEmail': sender_email,

@@ -30,6 +30,7 @@ from lambdas.common.shares_dynamo import create_share
 from lambdas.common.group_members_dynamo import is_member_of_group
 from lambdas.common.track_ratings_dynamo import upsert_track_rating
 from lambdas.common.share_listeners_dynamo import mark_listened
+from lambdas.common.notify import display_name_for, notify_friends_of
 
 log = get_logger(__file__)
 
@@ -229,5 +230,24 @@ def handler(event, context):
             log.warning(
                 f"Rate-on-share: failed to write rating for share {result['shareId']}: {exc}"
             )
+
+    # Notify the author's friends. A share is a friends-graph broadcast rather
+    # than an addressed message, so this fans out; notify_friends_of caps it and
+    # filters to ACCEPTED friendships only.
+    #
+    # Group-only shares are skipped deliberately: `share_received` says "someone
+    # sent you a song", and a group post is not that. Group notifications would
+    # need their own kind, and Groups has no client UI any more.
+    if public:
+        notify_friends_of(
+            email,
+            "share_received",
+            subject_id=result['shareId'],
+            actor_name=display_name_for(email),
+            track_name=track_name,
+            artist_name=artist_name,
+            share_id=result['shareId'],
+            image_url=album_art_url or None,
+        )
 
     return success_response(result)

@@ -188,6 +188,25 @@ def handler(event, context):
             rating = _coerce_rating(raw_rating)
         set_reaction(share_id, email, shared_by=shared_by, action=action, rating=rating)
 
+    # Rating notification. Coalesces with `share_listened` from the same person
+    # on the same share inside a 10-minute window — queueing then rating is one
+    # act of engagement and should be one interruption.
+    if action == "rated":
+        from lambdas.common.notify import display_name_for, notify
+
+        stars = int(raw_rating) if isinstance(raw_rating, (int, float)) else 0
+        notify(
+            "share_rated",
+            shared_by or "",
+            actor_email=email,
+            subject_id=share_id,
+            actor_name=display_name_for(email),
+            stars="★" * max(0, min(stars, 5)),
+            track_name=share.get("trackName") if share else None,
+            artist_name=share.get("artistName") if share else None,
+            share_id=share_id,
+        )
+
     # Threshold push — only on `queued`, only when not self-react, only at or above 3.
     if action == "queued" and email != shared_by:
         reactor_count = count_distinct_reactors(share_id)
