@@ -30,6 +30,33 @@ AWS Lambda-based backend for the Xomify Spotify analytics application.
 - Refresh token storage and management
 - User preferences and settings
 
+## Running the tests
+
+```bash
+uv run --python 3.13 --with pytest --with boto3 --with requests \
+       --with aiohttp --with pyjwt --with cryptography --with pydantic \
+       python -m pytest -q
+```
+
+**Expected: 668 passed, 0 failed.**
+
+### Why not just `pytest`
+
+Two traps, both of which make a perfectly healthy suite look broken:
+
+1. **A system `python3` older than 3.10 fails at collection.** This codebase uses `X | Y`
+   union syntax (`lambdas/common/errors.py`, among others), so an older interpreter reports
+   dozens of `TypeError: unsupported operand type(s) for |` collection errors. CI runs 3.12;
+   the command above pins 3.13.
+
+2. **`--with-requirements requirements.txt` does not work here.** The pinned `cffi` fails to
+   compile against Python 3.13 headers. The explicit `--with` list above installs only what
+   the tests actually import, and avoids it entirely.
+
+Omitting any one of those packages produces *failures*, not import errors — `pydantic` in
+particular takes out the broadcast and favorites handler tests, which reads as broken code
+rather than a missing dependency.
+
 ## Architecture
 
 ```
