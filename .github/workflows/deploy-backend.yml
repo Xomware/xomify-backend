@@ -27,6 +27,9 @@ on:
 
 env:
   AWS_REGION: "us-east-1"
+  # Terraform creates each lambda with a placeholder zip of a few hundred bytes.
+  # Anything at or under this is a function whose real code never deployed.
+  STUB_CODE_SIZE_BYTES: "1024"
 
 jobs:
   detect-changes:
@@ -281,13 +284,51 @@ jobs:
               --function-name "$FUNCTION_NAME" \
               --region "$AWS_REGION"
 
-          # If layer was updated, also update config (only after code update completes)
-          if [ "${{ needs.deploy-layer.outputs.layer_arn }}" != "" ]; then
-            echo "Updating layer configuration for $FUNCTION_NAME"
+          # Converge on the LATEST published layer, whether or not this run
+          # rebuilt one.
+          #
+          # This used to run only when `deploy-layer` had published something,
+          # which meant a deploy that touched no `lambdas/common/` file never
+          # set `--layers` at all. A brand-new lambda then kept whatever
+          # Terraform created it with -- the stub layer -- and every invoke died
+          # on `Runtime.ImportModuleError: No module named 'jwt'`, with the
+          # deploy showing green (#158).
+          TARGET_LAYER="${{ needs.deploy-layer.outputs.layer_arn }}"
+          if [ -z "$TARGET_LAYER" ]; then
+            # --no-paginate matters: the CLI auto-pages, and --query is applied
+            # PER PAGE, so without it this returns one ARN per page (196, 146,
+            # 96, 46) as separate lines. --max-items has the same problem plus a
+            # trailing pagination token. One page, newest first, is what's wanted.
+            TARGET_LAYER=$(aws lambda list-layer-versions \
+              --layer-name xomify-shared-packages \
+              --no-paginate \
+              --query 'LayerVersions[0].LayerVersionArn' \
+              --output text \
+              --region "$AWS_REGION")
+          fi
+
+          if [ -z "$TARGET_LAYER" ] || [ "$TARGET_LAYER" = "None" ]; then
+            echo "❌ Could not resolve a layer version for $FUNCTION_NAME"
+            exit 1
+          fi
+
+          # A read to skip a write. The steady state is "already on latest", and
+          # update-function-configuration costs a wait and a window where the
+          # function is Pending -- worth one cheap GET to avoid on every deploy.
+          CURRENT_LAYER=$(aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --query 'Layers[0].Arn' \
+            --output text \
+            --region "$AWS_REGION")
+
+          if [ "$CURRENT_LAYER" = "$TARGET_LAYER" ]; then
+            echo "✅ $FUNCTION_NAME already on $TARGET_LAYER"
+          else
+            echo "Attaching $TARGET_LAYER to $FUNCTION_NAME (was: $CURRENT_LAYER)"
             retry_aws "update-function-configuration for $FUNCTION_NAME" \
               aws lambda update-function-configuration \
                 --function-name "$FUNCTION_NAME" \
-                --layers "${{ needs.deploy-layer.outputs.layer_arn }}" \
+                --layers "$TARGET_LAYER" \
                 --region "$AWS_REGION"
 
             # Wait for config update to complete before declaring success, so a
@@ -301,8 +342,56 @@ jobs:
 
           echo "✅ $FUNCTION_NAME deployment complete"
 
+  # A deploy that reported green while every goals lambda still held the
+  # Terraform stub is what this job exists to prevent (#158). update-function-code
+  # succeeding is not evidence the function can import its handler.
+  verify-deploy:
+    needs: [detect-changes, deploy-changed-lambdas]
+    if: always() && needs.detect-changes.outputs.has_lambda_changes == 'true' && needs.deploy-changed-lambdas.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify deployed lambdas
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          LATEST_LAYER=$(aws lambda list-layer-versions \
+            --layer-name xomify-shared-packages \
+            --no-paginate \
+            --query 'LayerVersions[0].LayerVersionArn' \
+            --output text \
+            --region "$AWS_REGION")
+
+          FAILED=0
+          for LAMBDA in $(echo '${{ needs.detect-changes.outputs.changed_lambdas }}' | jq -r '.[]'); do
+            FUNCTION_NAME="xomify-$(echo $LAMBDA | tr '_' '-')"
+
+            read -r LAYER SIZE <<< "$(aws lambda get-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --query '[Layers[0].Arn, CodeSize]' \
+              --output text \
+              --region "$AWS_REGION")"
+
+            if [ "$LAYER" != "$LATEST_LAYER" ]; then
+              echo "❌ $FUNCTION_NAME is on $LAYER, not $LATEST_LAYER"
+              FAILED=1
+            fi
+
+            # The Terraform stub is a few hundred bytes. Any real handler is
+            # larger, so this catches a function that was created but never had
+            # its code deployed -- which is how the goals lambdas shipped dead.
+            if [ "$SIZE" -lt "$STUB_CODE_SIZE_BYTES" ]; then
+              echo "❌ $FUNCTION_NAME code is ${SIZE}B — still the Terraform stub"
+              FAILED=1
+            fi
+
+            [ "$FAILED" -eq 0 ] && echo "✅ $FUNCTION_NAME on $LAYER (${SIZE}B)"
+          done
+
+          exit $FAILED
+
   summary:
-    needs: [detect-changes, deploy-layer, update-all-lambdas-layer, deploy-changed-lambdas]
+    needs: [detect-changes, deploy-layer, update-all-lambdas-layer, deploy-changed-lambdas, verify-deploy]
     if: always()
     runs-on: ubuntu-latest
     steps:
