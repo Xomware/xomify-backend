@@ -10,6 +10,7 @@ import base64
 from datetime import datetime, timezone
 from typing import Any, Optional, Set
 
+from lambdas.common.cors import cors_headers
 from lambdas.common.logger import get_logger
 
 log = get_logger(__file__)
@@ -92,12 +93,9 @@ def get_path_params(event: dict) -> dict:
 # Response Building
 # ============================================
 
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-    "Content-Type": "application/json"
-}
+# Allow-Headers and Allow-Methods are deliberately absent: a browser only reads
+# them off a preflight response, and API Gateway owns OPTIONS. Repeating them on
+# every real response was bytes nobody read.
 
 
 def success_response(body: Any, status_code: int = 200, is_api: bool = True) -> dict:
@@ -114,7 +112,7 @@ def success_response(body: Any, status_code: int = 200, is_api: bool = True) -> 
     """
     return {
         "statusCode": status_code,
-        "headers": CORS_HEADERS,
+        "headers": cors_headers(),
         "body": json_dumps(body) if is_api else body,
         "isBase64Encoded": False
     }
@@ -148,7 +146,7 @@ def error_response(
     
     return {
         "statusCode": status_code,
-        "headers": CORS_HEADERS,
+        "headers": cors_headers(),
         "body": json_dumps(body) if is_api else body,
         "isBase64Encoded": False
     }

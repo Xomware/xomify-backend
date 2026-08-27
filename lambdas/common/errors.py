@@ -14,6 +14,7 @@ import json
 import time
 import traceback
 from typing import Optional
+from lambdas.common.cors import cors_headers, set_request_origin
 from lambdas.common.logger import get_logger
 
 log = get_logger(__file__)
@@ -67,10 +68,7 @@ class XomifyError(Exception):
         body = self.to_dict()
         return {
             "statusCode": self.status,
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Content-Type": "application/json"
-            },
+            "headers": cors_headers(),
             "body": json.dumps(body) if is_api else body,
             "isBase64Encoded": False
         }
@@ -482,6 +480,10 @@ def handle_errors(handler_name: str, log_context: bool = True):
             start = time.perf_counter()
             response = None
             err_text = None
+            # The only place that sees `event` on the way in for every handler,
+            # which is why origin resolution hangs off it rather than being
+            # threaded through ~100 success_response call sites.
+            set_request_origin(event)
             try:
                 response = func(event, context)
                 return response
