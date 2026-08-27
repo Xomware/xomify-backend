@@ -27,9 +27,11 @@ on:
 
 env:
   AWS_REGION: "us-east-1"
-  # Terraform creates each lambda with a placeholder zip of a few hundred bytes.
-  # Anything at or under this is a function whose real code never deployed.
-  STUB_CODE_SIZE_BYTES: "1024"
+  # Terraform creates each lambda with a placeholder zip that measures exactly
+  # 526 bytes. The smallest real handler in the repo is 975B (goals_history_set),
+  # so this sits between them with room on both sides -- 1024 was too high and
+  # flagged that handler as a stub on its first green deploy.
+  STUB_CODE_SIZE_BYTES: "600"
 
 jobs:
   detect-changes:
