@@ -5,13 +5,6 @@ AWS_DEFAULT_REGION ='us-east-1'
 AWS_ACCOUNT_ID = os.environ.get('AWS_ACCOUNT_ID', '')
 PRODUCT = 'xomify'
 
-# Headers
-RESPONSE_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-    "Content-Type": "application/json"
-}
-
 # Logging
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 

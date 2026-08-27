@@ -2,6 +2,7 @@
 POST /groups/leave - Leave a group
 """
 
+from lambdas.common.cors import cors_headers
 from lambdas.common.logger import get_logger
 from lambdas.common.errors import handle_errors
 from lambdas.common.utility_helpers import (
@@ -32,9 +33,6 @@ def handler(event, context):
 
     return {
         'statusCode': 204,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        },
+        'headers': cors_headers(),
         'body': ''
     }
