@@ -31,7 +31,6 @@ _TEST_ENV_VARS = {
     "SHARES_EMAIL_INDEX": "email-createdAt-index",
     "INVITE_URL_TEMPLATE": "https://xomify.test/invite/{code}",
     "FAVORITES_TABLE_NAME": "xomify-favorites-test",
-    "GOALS_TABLE_NAME": "xomify-goals-test",
     "BROADCASTS_TABLE_NAME": "xomify-broadcasts-test",
     "ADMIN_EMAIL": "admin@example.com",
     "DEVICE_TOKENS_TABLE_NAME": "xomify-device-tokens-test",
