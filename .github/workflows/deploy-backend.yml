@@ -99,7 +99,12 @@ jobs:
             # deployment and then fail on `cd lambdas/<gone>` -- a red deploy for
             # doing the right thing. Terraform destroys the function; the deploy
             # just needs to stop packaging it.
-            CHANGED_LAMBDAS=$(for l in $CHANGED_LAMBDAS; do [ -d "lambdas/$l" ] && echo "$l"; done)
+            # `if`, not `[ -d ] && echo`: the && form exits non-zero when the
+            # LAST iteration is a deleted lambda, which makes the whole command
+            # substitution non-zero and kills the step under `set -e`.
+            CHANGED_LAMBDAS=$(for l in $CHANGED_LAMBDAS; do
+              if [ -d "lambdas/$l" ]; then echo "$l"; fi
+            done)
 
             if [ -n "$CHANGED_LAMBDAS" ]; then
               # Convert to JSON array
