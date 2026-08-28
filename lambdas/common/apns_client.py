@@ -8,26 +8,23 @@ Provider tokens are valid for up to 60 minutes; we refresh every 20 minutes
 per Apple's recommendation. The `.p8` signing key, Key ID, Team ID, and
 Bundle ID are all loaded lazily from SSM SecureString parameters.
 
-Transport: urllib3 HTTP/2 is not available in the stdlib, so we use
-`urllib.request` with manual HTTP/1.1 framing. APNs will transparently
-upgrade HTTP/1.1 requests on `api.push.apple.com`, and boto's runtime
-already ships the required TLS stack.
+Transport: httpx with http2=True. APNs is HTTP/2 ONLY -- it does not
+upgrade an HTTP/1.1 request, it rejects it outright with
+`Unexpected HTTP/1.x request: POST /3/device/...`, which is what every
+push this service ever sent received. There is no stdlib HTTP/2 client,
+so this is a real dependency rather than a preference.
 
-For production volume a proper HTTP/2 client (hyper-h2 or httpx[http2])
-should be wired in, but for dogfood + v1 the HTTP/1.1 path is acceptable
-because the cron digest writer fans out per-user, not per-push.
+The client is held open on the module singleton so a warm container
+reuses one TLS connection and one HTTP/2 session across a fan-out.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import ssl
 import time
 from typing import Any, Optional
-from urllib import request as urlrequest
-from urllib.error import HTTPError, URLError
 
+import httpx
 import jwt
 
 from lambdas.common import ssm_helpers
@@ -52,6 +49,14 @@ class ApnsClient:
         self._use_sandbox = APNS_USE_SANDBOX if use_sandbox is None else use_sandbox
         self._cached_token: Optional[str] = None
         self._token_issued_at: float = 0.0
+        self._http: Optional[httpx.Client] = None
+
+    @property
+    def http(self) -> httpx.Client:
+        """Lazy so constructing a client costs nothing until something sends."""
+        if self._http is None:
+            self._http = httpx.Client(http2=True, timeout=10.0)
+        return self._http
 
     # -------------------------------------------------------------- Endpoint
     @property
@@ -159,39 +164,35 @@ class ApnsClient:
         if collapse_id:
             headers["apns-collapse-id"] = collapse_id
 
-        body_bytes = json.dumps(payload).encode("utf-8")
-        req = urlrequest.Request(url, data=body_bytes, headers=headers, method="POST")
-        ctx = ssl.create_default_context()
-
         try:
-            with urlrequest.urlopen(req, context=ctx, timeout=10) as resp:
-                status = resp.status
-                return {
-                    "ok": 200 <= status < 300,
-                    "statusCode": status,
-                    "reason": None,
-                    "token": device_token,
-                }
-        except HTTPError as http_err:
-            try:
-                body = http_err.read().decode("utf-8")
-                reason = json.loads(body).get("reason")
-            except Exception:
-                reason = None
-            log.warning(
-                f"APNs rejected push: status={http_err.code} reason={reason}"
-            )
-            return {
-                "ok": False,
-                "statusCode": http_err.code,
-                "reason": reason,
-                "token": device_token,
-            }
-        except URLError as url_err:
+            resp = self.http.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as err:
             raise ApnsError(
-                message=f"APNs transport error: {url_err}",
+                message=f"APNs transport error: {err}",
                 function="send",
             )
+
+        if resp.is_success:
+            return {
+                "ok": True,
+                "statusCode": resp.status_code,
+                "reason": None,
+                "token": device_token,
+            }
+
+        # APNs explains every rejection in a JSON `reason`, and the caller keys
+        # token pruning off 410 -- so a failure is returned, not raised.
+        try:
+            reason = resp.json().get("reason")
+        except Exception:
+            reason = resp.text or None
+        log.warning(f"APNs rejected push: status={resp.status_code} reason={reason}")
+        return {
+            "ok": False,
+            "statusCode": resp.status_code,
+            "reason": reason,
+            "token": device_token,
+        }
 
 
 # Module-level singleton — warm-start reuse.
