@@ -94,6 +94,13 @@ jobs:
             # Find changed lambda folders (excluding common) and format as JSON array
             CHANGED_LAMBDAS=$(echo "$CHANGED_FILES" | grep "^lambdas/" | grep -v "^lambdas/common/" | cut -d'/' -f2 | sort -u | grep -v '^$' || true)
 
+            # Drop lambdas whose directory no longer exists. `git diff` reports a
+            # DELETED file as a change, so removing a lambda used to queue it for
+            # deployment and then fail on `cd lambdas/<gone>` -- a red deploy for
+            # doing the right thing. Terraform destroys the function; the deploy
+            # just needs to stop packaging it.
+            CHANGED_LAMBDAS=$(for l in $CHANGED_LAMBDAS; do [ -d "lambdas/$l" ] && echo "$l"; done)
+
             if [ -n "$CHANGED_LAMBDAS" ]; then
               # Convert to JSON array
               JSON_ARRAY=$(echo "$CHANGED_LAMBDAS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
