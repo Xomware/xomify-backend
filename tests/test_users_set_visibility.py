@@ -77,3 +77,31 @@ def test_empty_body_is_rejected():
 
 def test_unknown_field_alone_is_rejected():
     assert handler(_event({"nope": PRIVATE}), None)["statusCode"] == 400
+
+
+# --- user_data exposes the normalized map --------------------------------
+
+@patch("lambdas.user_data.handler.get_user_table_data")
+def test_user_data_reports_visibility_defaults(mock_get):
+    from lambdas.user_data.handler import handler as user_data_handler
+    mock_get.return_value = {"email": "dom@example.com"}
+    resp = user_data_handler(
+        {"requestContext": {"authorizer": {"email": "dom@example.com"}}}, None
+    )
+    body = __import__("json").loads(resp["body"])
+    # A user who never touched the setting must read as friends, not as absent
+    # — the client should never have to guess the default.
+    assert body["visibility"] == {
+        "wrapped": FRIENDS, "releaseRadar": FRIENDS, "topItems": FRIENDS
+    }
+
+
+@patch("lambdas.user_data.handler.get_user_table_data")
+def test_user_data_reports_an_explicit_private(mock_get):
+    from lambdas.user_data.handler import handler as user_data_handler
+    mock_get.return_value = {"email": "dom@example.com", "wrapped_visibility": PRIVATE}
+    resp = user_data_handler(
+        {"requestContext": {"authorizer": {"email": "dom@example.com"}}}, None
+    )
+    body = __import__("json").loads(resp["body"])
+    assert body["visibility"]["wrapped"] == PRIVATE
