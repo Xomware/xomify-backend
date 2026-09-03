@@ -1,6 +1,6 @@
 # Friends on the pages that already show this data
 
-**Status:** Ready
+**Status:** Shipped — steps 1-4. Step 5 dropped.
 **Repos:** `xomify-backend`, `xomify-infrastructure`, `xomify-frontend`, `xomify-ios`
 
 ## The shape
@@ -14,7 +14,7 @@ people you follow.
 | Wrapped | their monthly top tracks / artists / genres | their full Wrapped |
 | Release Radar | new releases from artists they follow | the playlist, previewable |
 | Music Taste | their top songs, artists, genres | their full breakdown |
-| Shares | what friends were sent | the track, with **repost** |
+| ~~Shares~~ | ~~what friends were sent~~ | dropped, see below |
 
 ### Why this beats a Feed destination
 
@@ -95,7 +95,7 @@ the screen's existing views.
 Open a friend's Release Radar playlist and preview tracks in place. The
 30-second preview path already exists.
 
-### 5. Shares: friends + repost  (~90 lines, backend + iOS)
+### 5. Shares: friends + repost — DROPPED
 
 The Shares screen already has a direction filter; friends becomes a third
 position. Repost writes a new share owned by you, referencing the original.
@@ -104,6 +104,20 @@ Reposts go to Xomify's own `/shares/*`, not Xomtracks. An ingested Xomtracks
 share is a record of something that **happened** over iMessage; a repost is
 something you **authored**. Mixing them makes the Shares screen mean two
 different things.
+
+**Dropped 2026-09-03.** The other four artefacts show YOUR data — your recap,
+your radar, your taste. Shares shows what other people sent you over iMessage:
+someone else's content, texted privately, which makes it the most
+privacy-sensitive of the five while being the least about you.
+
+The friends filter was also the most expensive half. Xomtracks scopes share
+listing to the caller's own owner id and holds no knowledge of the Xomify
+friend graph, so it needed a new trust path between two products that do not
+currently talk.
+
+Repost was never blocked — it writes to Xomify's own `/shares/*` and needs no
+Xomtracks involvement. It only ever needed a destination decided. If it comes
+back, it comes back on its own, without the friends filter.
 
 ## Decided
 
@@ -118,6 +132,18 @@ users who all know each other is a different privacy setting from a public app;
 and the cost is that the first anyone hears of it is seeing their stats already
 visible. The settings toggle from step 1 is what makes that reversible, so it
 still ships first.
+
+## Shipped
+
+Steps 1-4, on web and iOS both:
+
+- visibility flags on the user record, defaulting to `friends`
+- `/friends/wrapped`, `/friends/release-radar`, `/friends/top-items`
+- the Me/Friends switch on Wrapped, Release Radar and Music Taste
+- the three visibility toggles in settings
+- opening the week's Release Radar playlist in Spotify
+
+iOS 1.21.1. Web is continuously deployed.
 
 ## Not in scope
 
