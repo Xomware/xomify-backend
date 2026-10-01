@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: Xomware/github-actions/.github/workflows/deploy-lambda-python.yml@feature/deploy-lambda-python
+    uses: Xomware/github-actions/.github/workflows/deploy-lambda-python.yml@v1
     with:
       app: xomify
       lambdas: ${{ inputs.lambdas }}
